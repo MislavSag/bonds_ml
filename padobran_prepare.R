@@ -350,8 +350,7 @@ packages = c("data.table", "gausscov", "paradox", "mlr3", "mlr3pipelines",
 reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
 
 # batchmark
-for (i in 1:3) {
-# designs_l = lapply(1:6, function(i) { # length(cvs)
+for (i in 1:length(cv)) {
   # debug
   # i = 1
   print(i)
