@@ -346,7 +346,7 @@ packages = c("data.table", "gausscov", "paradox", "mlr3", "mlr3pipelines",
 reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
 
 # batchmark
-for (i in 1:length(cv)) {
+for (i in 1:length(cvs)) {
   # debug
   # i = 1
   print(i)
