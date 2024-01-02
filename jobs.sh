@@ -3,7 +3,7 @@
 #PBS -N BondsJobs
 #PBS -l ncpus=1
 #PBS -l mem=2GB
-#PBS -J 20001-30000
+#PBS -J 30001-40000
 #PBS -o experiments/logs
 #PBS -j oe
 
