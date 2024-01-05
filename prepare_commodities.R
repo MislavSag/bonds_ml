@@ -89,5 +89,6 @@ mom_width = 1:12
 mom_cols = paste0("m_", mom_width)
 dt[, (mom_cols) := lapply(mom_width, function(x) value / shift(value, x) - 1), by = var]
 
+# save
+fwrite(dt, "data/commodities_dt.csv")
 
-dt[, unique(var)]
