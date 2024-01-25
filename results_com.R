@@ -4,17 +4,22 @@ library(fs)
 library(duckdb)
 library(lubridate)
 library(PerformanceAnalytics)
+library(janitor)
 
 
 
 # commodity data ----------------------------------------------------------------
+# import commodity prices
+commodity_prices = fread("data/commodity_prices.csv")
+commodity_prices = clean_names(commodity_prices)
+commodity_prices[, month := as.Date(paste(gsub("M", "", month), "01"), format = "%Y%m%d")]
 
 
 
 # PREDICTIONS -------------------------------------------------------------
 # list files
-mlr3_save_path = file.path(file.path(getwd(), "data/results"))
-files = list.files("data/results", full.names = TRUE)
+mlr3_save_path = file.path(file.path(getwd(), "data"))
+files = list.files(mlr3_save_path, full.names = TRUE, pattern = "commodities-")
 
 # read benchmark results
 predictions_l = list()
@@ -45,10 +50,12 @@ for (i in 1:length(files)) {
   learner_names = lapply(bmr_dt$learner, `[[`, "id")
   learner_names = gsub(".*\\.regr\\.|\\.tuned", "", learner_names)
   predictions = lapply(bmr_dt$prediction, function(x) as.data.table(x))
+  horizont = lapply(bmr_dt$task, `[[`, "target_names")
   predictions = lapply(seq_along(predictions), function(j)
     cbind(task = task_names[[j]],
           learner = learner_names[[j]],
-          predictions[[j]]))
+          predictions[[j]],
+          horizont = horizont[[j]]))
   predictions = rbindlist(predictions)
 
   # merge backs and predictions
@@ -58,13 +65,13 @@ for (i in 1:length(files)) {
   predictions = backend[predictions, on = c("row_ids")]
 
   # select cols
-  cols = c("row_ids", "maturity", "task", "learner", "truth", "response", "date")
+  cols = c("row_ids", "var", "horizont", "task", "learner", "truth", "response", "month")
   predictions = predictions[, ..cols]
-  predictions[, month := as.Date(date)]
+  # predictions[, month := as.Date(date)]
   predictions_l[[i]] = predictions
 }
 predictions = rbindlist(predictions_l)
-predictions[, horizont := as.integer(gsub(".*_", "", task))]
+predictions[, horizont := as.integer(gsub(".*_", "", horizont))]
 predictions[, unique(task)]
 
 
@@ -79,7 +86,7 @@ Performance <- function(dt) {
 
   res = rbind(cumRetx, annRetx)
   res = as.data.table(res, keep.rownames = "var")
-  res[, mat := dt[1, mat]]
+  # res[, mat := dt[1, mat]]
 
   # sharpex = SharpeRatio.annualized(x, scale=12)
   # winpctx = length(x[x > 0])/length(x[x != 0])
@@ -97,33 +104,38 @@ Performance <- function(dt) {
 
 
 # backtest function
-backtest = function(task, mat) {
-  # task = backtest_dt[task == "m1_1"]
-  # mat = "m1_1"
+backtest = function(task, var) {
+  # task = predictions[var == "gold"]
+  # hor = 1
   predictions_wide = task[, .(month, learner, response)]
   predictions_wide = dcast(predictions_wide, month ~ learner, value.var = "response")
   predictions_wide[, res_sum := ranger + xgboost]
   predictions_wide[, signal_ranger := ranger >= 0]
   predictions_wide[, signal_xgboost := xgboost >= 0]
   predictions_wide[, signal_sum := (xgboost + ranger) >= 0]
-  tlt_back = merge(tlt_m, predictions_wide, by = "month", all.x = TRUE, all.y = FALSE)
-  tlt_back = tlt_back[, `:=`(
+  predictions_wide[, month := as.Date(month)]
+  cols = c("month", var)
+  print(cols)
+  commodity_ = commodity_prices[, ..cols]
+  back_ = merge(commodity_, predictions_wide, by = "month", all.x = TRUE, all.y = FALSE)
+  back_[, returns := get(var) / shift(get(var)) - 1]
+  back_ = back_[, `:=`(
     strategy_ranger = returns * shift(signal_ranger),
     strategy_xgboost = returns * shift(signal_xgboost),
     signal_sum = returns * shift(signal_sum)
   )]
   cols = c("month", "returns", "strategy_ranger", "strategy_xgboost",
            "signal_sum")
-  tlt_back = tlt_back[, ..cols]
-  tlt_back = na.omit(tlt_back)
-  tlt_back[, mat := mat]
-  # tlt_back = na.omit(as.xts.data.table(tlt_back))
-  # colnames(tlt_back) = paste0(colnames(tlt_back), "_", task[1, 2])
-  tlt_back
+  back_ = back_[, ..cols]
+  back_ = na.omit(back_)
+  # back_[, mat := mat]
+  # # tlt_back = na.omit(as.xts.data.table(tlt_back))
+  # # colnames(tlt_back) = paste0(colnames(tlt_back), "_", task[1, 2])
+  return(back_)
 }
 
 # backtest grid
-performance = predictions[, .(returns = list(backtest(.SD, .BY))), by = "task"]
+performance = predictions[, .(returns = list(backtest(.SD, .BY[[1]]))), by = c("task")]
 performance = performance[, do.call(rbind, lapply(returns, Performance))]
 
 # individual backtests

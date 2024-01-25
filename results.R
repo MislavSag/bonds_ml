@@ -13,7 +13,7 @@ get_sec = function(symbol) {
   con <- dbConnect(duckdb::duckdb())
   query <- sprintf("
     SELECT *
-    FROM 'F:/lean_root/data/all_stocks_daily.csv'
+    FROM 'F:/lean/data/stocks_daily.csv'
     WHERE Symbol = '%s'
 ", symbol)
   data_ <- dbGetQuery(con, query)

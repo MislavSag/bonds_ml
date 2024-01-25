@@ -6,6 +6,7 @@ library(paradox)
 library(AzureStor)
 library(mlr3batchmark)
 library(batchtools)
+library(finautoml)
 
 
 # downlaod data from Azure blob
@@ -13,7 +14,7 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-dt = storage_read_csv(cont, "bonds-predictors.csv")
+  dt = storage_read_csv(cont, "bonds-predictors-20240125.csv")
 dt = as.data.table(dt)
 
 
@@ -26,6 +27,9 @@ task_params = expand.grid(
   stringsAsFactors = FALSE
 )
 colnames(task_params) = c("horizont", "maturity")
+task_params = task_params[task_params$horizont == "1", ]
+idx = as.integer(gsub("m", "", task_params$maturity)) > 12
+task_params = task_params[idx, ]
 
 # define predictors
 cols = colnames(dt)
@@ -55,14 +59,14 @@ tasks = lapply(1:nrow(task_params), function(i) {
 # CROSS VALIDATION --------------------------------------------------------
 # create expanding window function
 nested_cv_expanding = function(task,
-                               train_length_start = 60,
+                               train_length_start = 360,
                                tune_length = 3,
                                test_length = 1,
-                               gap_tune = 1,
-                               gap_test = 1) {
+                               gap_tune = 0,
+                               gap_test = 0) {
 
   # get year month id data
-  # task = tasks[[2]]$clone()
+  # task = tasks[[1]]$clone()
   task_ = task$clone()
   date_ = task_$backend$data(cols = c("date", "..row_id"),
                              rows = 1:task_$nrow)
@@ -143,7 +147,7 @@ cvs = lapply(tasks, function(tsk_) {
   horizont_ = as.integer(gsub("excess_return_", "", tsk_$target_names))
   nested_cv_expanding(
     task = tsk_,
-    train_length_start = 120,
+    train_length_start = 360,
     tune_length = 3,
     test_length = 1,
     gap_tune = horizont_ - 1, # TODO: think if here is -1.
@@ -154,30 +158,16 @@ cvs = lapply(tasks, function(tsk_) {
 
 # ADD PIPELINES -----------------------------------------------------------
 # source pipes, filters and other
-# source("mlr3_winsorization.R")
-source("mlr3_uniformization.R")
 source("mlr3_gausscov_f1st.R")
 source("mlr3_gausscov_f3st.R")
-# source("mlr3_dropna.R")
-# source("mlr3_dropnacol.R")
-source("mlr3_filter_drop_corr.R")
-# source("mlr3_winsorizationsimple.R")
-# source("mlr3_winsorizationsimplegroup.R")
-# source("PipeOpPCAExplained.R")
 # measures
 source("Linex.R")
 source("AdjLoss2.R")
 source("PortfolioRet.R")
 
 # add my pipes to mlr dictionary
-mlr_pipeops$add("uniformization", PipeOpUniform)
-# mlr_pipeops$add("winsorize", PipeOpWinsorize)
-# mlr_pipeops$add("winsorizesimple", PipeOpWinsorizeSimple)
-# mlr_pipeops$add("winsorizesimplegroup", PipeOpWinsorizeSimpleGroup)
-# mlr_pipeops$add("dropna", PipeOpDropNA)
-# mlr_pipeops$add("dropnacol", PipeOpDropNACol)
-mlr_pipeops$add("dropcorr", PipeOpDropCorr)
-# mlr_pipeops$add("pca_explained", PipeOpPCAExplained)
+mlr_pipeops$add("uniformization", finautoml::PipeOpUniform)
+mlr_pipeops$add("dropcorr", finautoml::PipeOpDropCorr)
 mlr_filters$add("gausscov_f1st", FilterGausscovF1st)
 mlr_filters$add("gausscov_f3st", FilterGausscovF3st)
 mlr_measures$add("linex", Linex)
@@ -279,8 +269,6 @@ search_space_rf$add(
      regr.ranger.num.trees  = p_int(10, 2000),
      regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees")))
 )
-# regr.ranger.min.node.size   = p_int(1, 20), # Adjust the range as needed
-# regr.ranger.sample.fraction = p_dbl(0.1, 1),
 
 # xgboost graph
 graph_xgboost = graph_template %>>%
@@ -433,7 +421,7 @@ sh_file = sprintf("
 
 #PBS -N PEAD
 #PBS -l ncpus=4
-#PBS -l mem=8GB
+#PBS -l mem=4GB
 #PBS -J 1-%d
 #PBS -o experiments/logs
 #PBS -j oe
