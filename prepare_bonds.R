@@ -83,56 +83,31 @@ excess_returns(12)
 
 
 # MACRO DATA --------------------------------------------------------------
-# TODO : Simplify this after macro data are downloaded
-
-# import data we need
-fred_columns = fread("data/fred_columns.csv")
-fred_columns = fred_columns[start_date == min(start_date), cols]
+# Import data we need
+fred_columns = fread("data/fred_col.csv")
+fred_columns[, unique(start_date)]
+# fred_columns = fred_columns[start_date == min(start_date), cols]
+fred_columns = fred_columns[start_date == as.Date("1990-01-01"), cols]
 
 # Import fred series
-pah_fred = "F:/data/macro/fred/"
-files_ = paste0(pah_fred, fred_columns, ".csv")
-fred_dt = lapply(files_, fread)
-fred_dt = rbindlist(fred_dt)
-
-# Create date column
-fred_dt[, date_real := date]
-fred_dt[vintage == 1, date_real := realtime_start]
-fred_dt[, realtime_start := NULL]
-
-# keep unique dates by keeping first observation
-fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
+fred_dt = fread("data/fred_sample.csv")
+fred_dt = fred_dt[series_id %chin% fred_columns]
 
 # diff if necessary
 fred_dt = fred_dt[, ndif := ndiffs(value), by = series_id]
 fred_dt[, unique(ndif), by = series_id][, .N, by = V1]
 fred_dt[ndif > 0, value_diff := c(rep(NA, unique(ndif)), diff(value, unique(ndif))), by = series_id]
 
-# downsample to monthly frequency
-fred_dt[, month := ceiling_date(date, "month")]
-fred_dt = fred_dt[, tail(.SD, 1), by = c("series_id", "month")]
-
 # reshape
 fred_dt = dcast(fred_dt[, .(month, series_id, value)],
                 month ~ series_id,
                 value.var = "value")
 
-# add missing dates
-dates = data.table(month = seq.Date(fred_dt[, min(month)], fred_dt[, max(month)], by = "month"))
-fred_dt = fred_dt[dates, on = "month"]
-
-# locf vars
-predictors = colnames(fred_dt)[2:ncol(fred_dt)]
-fred_dt[, (predictors) := lapply(.SD, nafill, type = "locf"), .SDcols = predictors]
-
-# lag all variables - IMPORTANT !
-# fred_dt[, (predictors) := lapply(.SD, shift), .SDcols = predictors]
-
-# filter dates
-fred_dt = fred_dt[month >= lw[, min(date)]]
-
-# change colun name to be the same as in other objects
+# Change column name to be the same as in other objects
 setnames(fred_dt, "month", "date")
+
+# Remove missing vlaues
+fred_dt = na.omit(fred_dt)
 
 # predictors fred
 predictors_fred = colnames(fred_dt)[2:ncol(fred_dt)]
@@ -140,7 +115,7 @@ predictors_fred = colnames(fred_dt)[2:ncol(fred_dt)]
 
 # PREDICTORS --------------------------------------------------------------
 # merge yields and macro data
-dt = merge(yieldsadj, fred_dt, by = "date", all.x = TRUE, all.y = FALSE)
+dt = merge(fred_dt, yieldsadj, by = "date", all.x = TRUE, all.y = FALSE)
 
 # momentum predictors
 setorder(dt, maturity, date)
@@ -168,6 +143,9 @@ spa_fact = dcast(spa_fact, date ~ var)
 setnames(spa_fact, colnames(spa_fact), gsub(" ", "_", colnames(spa_fact)))
 spa_fact[, date := as.IDate(date)]
 dt = merge(dt, spa_fact, by = "date", all.x = TRUE)
+
+# Remove missing values
+dt = na.omit(dt)
 
 # save to Azure
 endpoint = "https://snpmarketdata.blob.core.windows.net/"

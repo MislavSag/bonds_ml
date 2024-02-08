@@ -9,12 +9,14 @@ library(batchtools)
 library(finautoml)
 
 
+
+# DATA --------------------------------------------------------------------
 # downlaod data from Azure blob
 blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-  dt = storage_read_csv(cont, "bonds-predictors-20240125.csv")
+  dt = storage_read_csv(cont, "bonds-predictors-20240208.csv")
 dt = as.data.table(dt)
 
 
@@ -28,7 +30,7 @@ task_params = expand.grid(
 )
 colnames(task_params) = c("horizont", "maturity")
 task_params = task_params[task_params$horizont == "1", ]
-idx = as.integer(gsub("m", "", task_params$maturity)) > 12
+idx = as.integer(gsub("m", "", task_params$maturity)) < 240
 task_params = task_params[idx, ]
 
 # define predictors
@@ -58,8 +60,12 @@ tasks = lapply(1:nrow(task_params), function(i) {
 
 # CROSS VALIDATION --------------------------------------------------------
 # create expanding window function
+monnb = function(d) {
+  lt <- as.POSIXlt(as.Date(d, origin="1900-01-01"))
+  lt$year*12 + lt$mon }
+mondf = function(d1, d2) monnb(d2) - monnb(d1)
 nested_cv_expanding = function(task,
-                               train_length_start = 360,
+                               train_length_start = 240,
                                tune_length = 3,
                                test_length = 1,
                                gap_tune = 0,
@@ -72,6 +78,7 @@ nested_cv_expanding = function(task,
                              rows = 1:task_$nrow)
   stopifnot(all(task_$row_ids == date_$`..row_id`))
   groups_v = date_[, unlist(unique(date))]
+  groups_v = sort(groups_v)
 
   # create cusom CV's for inner and outer sampling
   custom_inner = rsmp("custom", id = task_$id)
@@ -80,10 +87,6 @@ nested_cv_expanding = function(task,
   # util vars
   get_row_ids = function(mid) unlist(date_[date %in% mid, 2], use.names = FALSE)
   n = task_$nrow
-  mondf = function(d1, d2) { monnb(d2) - monnb(d1) }
-  monnb = function(d) {
-    lt <- as.POSIXlt(as.Date(d, origin="1900-01-01"))
-    lt$year*12 + lt$mon }
 
   # create train data
   train_groups = lapply(train_length_start:n, function(i) groups_v[1:i])
@@ -143,17 +146,61 @@ nested_cv_expanding = function(task,
 
 # create list of cvs
 cvs = lapply(tasks, function(tsk_) {
-  # tsk_ = tasks[[1]]
+  # tsk_ = tasks[[3]]
   horizont_ = as.integer(gsub("excess_return_", "", tsk_$target_names))
+  maturity_ = as.integer(gsub("m|_.*", "", tsk_$id))
+  min_date = tsk_$backend$data(rows = tsk_$row_ids, cols = "date")
+  min_date = min_date[, min(as.Date(date), na.rm = TRUE)]
+  train_length = mondf(min_date, as.Date("2001-01-01")) - maturity_
   nested_cv_expanding(
     task = tsk_,
-    train_length_start = 360,
-    tune_length = 3,
+    train_length_start = train_length,
+    tune_length = 6,
     test_length = 1,
-    gap_tune = horizont_ - 1, # TODO: think if here is -1.
-    gap_test = horizont_ - 1  # TODO: think if here is -1.
+    gap_tune = horizont_, # TODO: think if here is -1. Without -1 is conservative
+    gap_test = horizont_  # TODO: think if here is -1. Without -1 is conservative
   )
 })
+
+# visualize CV's
+if (interactive()) {
+  library(ggplot2)
+  library(patchwork)
+  prepare_cv_plot = function(x, set = "train") {
+    x = lapply(x, function(x) data.table(ID = x))
+    x = rbindlist(x, idcol = "fold")
+    x[, fold := as.factor(fold)]
+    x[, set := as.factor(set)]
+    x[, ID := as.numeric(ID)]
+  }
+  plot_cv = function(cv, n = 5) {
+    # cv = cvs[[1]]
+    print(cv)
+    cv_test_inner = cv$custom_inner
+    cv_test_outer = cv$custom_outer
+
+    # prepare train, tune and test folds
+    train_sets = cv_test_inner$instance$train[1:n]
+    train_sets = prepare_cv_plot(train_sets)
+    tune_sets = cv_test_inner$instance$test[1:n]
+    tune_sets = prepare_cv_plot(tune_sets, set = "tune")
+    test_sets = cv_test_outer$instance$test[1:n]
+    test_sets = prepare_cv_plot(test_sets, set = "test")
+    dt_vis = rbind(train_sets[seq(1, nrow(train_sets), 2)],
+                   tune_sets[seq(1, nrow(tune_sets), 2)],
+                   test_sets[seq(1, nrow(test_sets), 1)])
+    substr(colnames(dt_vis), 1, 1) = toupper(substr(colnames(dt_vis), 1, 1))
+    ggplot(dt_vis, aes(x = Fold, y = ID, color = Set)) +
+      geom_point() +
+      theme_minimal() +
+      coord_flip() +
+      labs(x = "", y = '',
+           title = paste0(gsub("-.*", "", cv_test_outer$id)))
+  }
+  plots = lapply(cvs, plot_cv, n = 30)
+  wp = wrap_plots(plots)
+  ggsave("plot_cv.png", plot = wp, width = 10, height = 8, dpi = 300)
+}
 
 
 # ADD PIPELINES -----------------------------------------------------------
@@ -161,7 +208,6 @@ cvs = lapply(tasks, function(tsk_) {
 source("mlr3_gausscov_f1st.R")
 source("mlr3_gausscov_f3st.R")
 # measures
-source("Linex.R")
 source("AdjLoss2.R")
 source("PortfolioRet.R")
 
@@ -182,15 +228,24 @@ gr = gunion(list(
   po("pca", center = FALSE, rank. = 10),
   po("ica", n.comp = 10)
 )) %>>% po("featureunion")
+filters_ = list(
+  po("filter", flt("disr"), filter.nfeat = 3),
+  po("filter", flt("jmim"), filter.nfeat = 3),
+  po("filter", flt("jmi"), filter.nfeat = 3),
+  po("filter", flt("mim"), filter.nfeat = 3),
+  po("filter", flt("mrmr"), filter.nfeat = 3),
+  po("filter", flt("njmim"), filter.nfeat = 3),
+  po("filter", flt("cmim"), filter.nfeat = 3),
+  po("filter", flt("carscore"), filter.nfeat = 3), # UNCOMMENT LATER< SLOWER SO COMMENTED FOR DEVELOPING
+  po("filter", flt("information_gain"), filter.nfeat = 3),
+  po("filter", filter = flt("relief"), filter.nfeat = 3),
+  po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
+)
+graph_filters = gunion(filters_) %>>%
+  po("featureunion", length(filters_), id = "feature_union_filters")
 graph_template =
-  # po("subsample") %>>% # uncomment this for hyperparameter tuning
-  # po("dropnacol", id = "dropnacol", cutoff = 0.05) %>>%
-  # po("dropna", id = "dropna") %>>%
   po("removeconstants", id = "removeconstants_1", ratio = 0)  %>>%
   po("fixfactors", id = "fixfactors") %>>%
-  # po("winsorizesimple", id = "winsorizesimple", probs_low = 0.01, probs_high = 0.99, na.rm = TRUE) %>>%
-  # po("winsorizesimplegroup", group_var = "weekid", id = "winsorizesimplegroup", probs_low = 0.01, probs_high = 0.99, na.rm = TRUE) %>>%
-  # po("removeconstants", id = "removeconstants_2", ratio = 0)  %>>%
   po("dropcorr", id = "dropcorr", cutoff = 0.99) %>>%
   # scale branch
   po("branch", options = c("uniformization", "scale"), id = "scale_branch") %>>%
@@ -198,40 +253,13 @@ graph_template =
               po("scale")
   )) %>>%
   po("unbranch", id = "scale_unbranch") %>>%
-  # po("dropna", id = "dropna_v2") %>>%
-  # add pca columns
   gr %>>%
-  # filters
-  po("branch", options = c("jmi", "relief", "gausscovf3"), id = "filter_branch") %>>%
-  gunion(list(po("filter", filter = flt("jmi"), filter.nfeat = 10),
-              po("filter", filter = flt("relief"), filter.nfeat = 10),
-              po("filter", filter = flt("gausscov_f3st"), m = 1, p0 = 0.01, filter.cutoff = 0)
-              # po("filter", filter = flt("gausscov_f1st"), filter.cutoff = 0)
-  )) %>>%
-  po("unbranch", id = "filter_unbranch") %>>%
-  # modelmatrix
-  po("branch", options = c("nop_interaction", "modelmatrix"), id = "interaction_branch") %>>%
-  gunion(list(
-    po("nop", id = "nop_interaction"),
-    po("modelmatrix", formula = ~ . ^ 2))) %>>%
-  po("unbranch", id = "interaction_unbranch") %>>%
+  graph_filters %>>%
   po("removeconstants", id = "removeconstants_3", ratio = 0)
 
 # hyperparameters template
 graph_template$param_set
 search_space_template = ps(
-  # subsample for hyperband
-  # subsample.frac = p_dbl(0.3, 1, tags = "budget"), # unccoment this if we want to use hyperband optimization
-  # preprocessing
-  # dropnacol.affect_columns = p_fct(
-  #   levels = c("0.01", "0.05", "0.10"),
-  #   trafo = function(x, param_set) {
-  #     switch(x,
-  #            "0.01" = 0.01,
-  #            "0.05" = 0.05,
-  #            "0.10" = 0.1)
-  #   }
-  # ),
   dropcorr.cutoff = p_fct(
     levels = c("0.80", "0.90", "0.95", "0.99"),
     trafo = function(x, param_set) {
@@ -242,17 +270,8 @@ search_space_template = ps(
              "0.99" = 0.99)
     }
   ),
-  # dropcorr.cutoff = p_fct(levels = c(0.8, 0.9, 0.95, 0.99)),
-  # winsorizesimplegroup.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimplegroup.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
-  # winsorizesimple.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimple.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
   # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # filters
-  filter_branch.selection = p_fct(levels = c("jmi", "relief", "gausscovf3")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
+  scale_branch.selection = p_fct(levels = c("uniformization", "scale"))
 )
 
 # random forest graph
@@ -277,18 +296,6 @@ plot(graph_xgboost)
 graph_xgboost = as_learner(graph_xgboost)
 as.data.table(graph_xgboost$param_set)[grep("depth", id), .(id, class, lower, upper, levels)]
 search_space_xgboost = ps(
-  # subsample for hyperband
-  # subsample.frac = p_dbl(0.3, 1, tags = "budget"), # unccoment this if we want to use hyperband optimization
-  # preprocessing
-  # dropnacol.affect_columns = p_fct(
-  #   levels = c("0.01", "0.05", "0.10"),
-  #   trafo = function(x, param_set) {
-  #     switch(x,
-  #            "0.01" = 0.01,
-  #            "0.05" = 0.05,
-  #            "0.10" = 0.1)
-  #   }
-  # ),
   dropcorr.cutoff = p_fct(
     levels = c("0.80", "0.90", "0.95", "0.99"),
     trafo = function(x, param_set) {
@@ -299,15 +306,8 @@ search_space_xgboost = ps(
              "0.99" = 0.99)
     }
   ),
-  # dropcorr.cutoff = p_fct(levels = c(0.8, 0.9, 0.95, 0.99)),
-  # winsorizesimple.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimple.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
   # scaling
   scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # filters
-  filter_branch.selection = p_fct(levels = c("jmi", "relief", "gausscovf3")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
   # learner
   regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
   regr.xgboost.max_depth = p_int(1, 20),
@@ -316,25 +316,35 @@ search_space_xgboost = ps(
   regr.xgboost.subsample = p_dbl(0.1, 1)
 )
 
+# glmnet graph
+graph_glmnet = graph_template %>>%
+  po("learner", learner = lrn("regr.glmnet"))
+graph_glmnet = as_learner(graph_glmnet)
+as.data.table(graph_glmnet$param_set)[, .(id, class, lower, upper, levels)]
+search_space_glmnet = ps(
+  dropcorr.cutoff = p_fct(
+    levels = c("0.80", "0.90", "0.95", "0.99"),
+    trafo = function(x, param_set) {
+      switch(x,
+             "0.80" = 0.80,
+             "0.90" = 0.90,
+             "0.95" = 0.95,
+             "0.99" = 0.99)
+    }
+  ),
+  # scaling
+  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+  # learner
+  regr.glmnet.s     = p_int(lower = 5, upper = 30),
+  regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
+)
+
+
 
 # BATCHMARK ---------------------------------------------------------------
-# exp dir
-if (interactive()) {
-  dirname_ = "experiments_test"
-  if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
-} else {
-  dirname_ = "experiments"
-}
-
-# create registry
-print("Create registry")
-packages = c("data.table", "gausscov", "paradox", "mlr3", "mlr3pipelines",
-             "mlr3tuning", "mlr3misc", "future", "future.apply",
-             "mlr3extralearners", "stats")
-reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
-
 # batchmark
-for (i in 1:length(cvs)) {
+designs_l = lapply(seq_along(cvs), function(i) {
+# for (i in 1:length(cvs)) {
   # debug
   # i = 1
   print(i)
@@ -404,12 +414,32 @@ for (i in 1:length(cvs)) {
       learners = list(at_rf, at_xgboost),
       resamplings = customo_
     )
-
   # populate registry with problems and algorithms to form the jobs
-  print("Batchmark")
-  batchmark(design, reg = reg)
+  # print("Batchmark")
+  # batchmark(design, reg = reg)
   })
+  designs_cv = do.call(rbind, designs_cv_l)
+})
+designs = do.call(rbind, designs_l)
+
+# exp dir
+if (interactive()) {
+  dirname_ = "experiments_test"
+  if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
+} else {
+  dirname_ = "experiments"
 }
+
+# create registry
+print("Create registry")
+packages = c("data.table", "gausscov", "paradox", "mlr3", "mlr3pipelines",
+             "mlr3tuning", "mlr3misc", "future", "future.apply",
+             "mlr3extralearners", "stats")
+reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
+
+# populate registry with problems and algorithms to form the jobs
+print("Batchmark")
+batchmark(designs, reg = reg)
 
 # save registry
 print("Save registry")
@@ -419,16 +449,16 @@ saveRegistry(reg = reg)
 sh_file = sprintf("
 #!/bin/bash
 
-#PBS -N PEAD
+#PBS -N BondsML
 #PBS -l ncpus=4
 #PBS -l mem=4GB
 #PBS -J 1-%d
-#PBS -o experiments/logs
+#PBS -o %s/logs
 #PBS -j oe
 
 cd ${PBS_O_WORKDIR}
 apptainer run image.sif run_job.R 0
-", tail(reg$defs[, def.id], 1))
+", tail(reg$defs[, def.id], 1), dirname_)
 sh_file_name = "jobs.sh"
 file.create(sh_file_name)
 writeLines(sh_file, sh_file_name)

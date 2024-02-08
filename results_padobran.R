@@ -17,7 +17,7 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 
 # globals
-PATH = "F:/padobran/bonds_ml/"
+PATH = "./experiments_test" # "F:/padobran/bonds_ml/"
 
 # load registry
 reg = loadRegistry(PATH, work.dir=PATH)
@@ -87,10 +87,9 @@ backends[, task := paste0(maturity, "_", horizont)]
 predictions = backends[, .(date, task, row_ids)][predictions, on = c("task", "row_ids")]
 
 # measures
-source("Linex.R")
 source("AdjLoss2.R")
 source("PortfolioRet.R")
-mlr_measures$add("linex", Linex)
+mlr_measures$add("linex", finautoml::Linex)
 mlr_measures$add("adjloss2", AdjLoss2)
 mlr_measures$add("portfolio_ret", PortfolioRet)
 
@@ -165,8 +164,8 @@ Performance <- function(dt) {
 # backtest function
 backtest = function(task, mat) {
   print(mat)
-  # task = backtest_dt[task == "m1_1"]
-  # mat = "m1_1"
+  # task = backtest_dt[task == "m24_1"]
+  # mat = "m24_1"
   predictions_wide = task[, .(month, learner, response)]
   predictions_wide = dcast(predictions_wide, month ~ learner, value.var = "response")
   predictions_wide[, res_sum := ranger + xgboost]
@@ -177,10 +176,10 @@ backtest = function(task, mat) {
   tlt_back = tlt_back[, `:=`(
     strategy_ranger = returns * shift(signal_ranger),
     strategy_xgboost = returns * shift(signal_xgboost),
-    signal_sum = returns * shift(signal_sum)
+    strategy_sum = returns * shift(signal_sum)
   )]
   cols = c("month", "returns", "strategy_ranger", "strategy_xgboost",
-           "signal_ranger", "signal_xgboost","signal_sum")
+           "strategy_sum", "signal_ranger", "signal_xgboost", "signal_sum")
   tlt_back = tlt_back[, ..cols]
   tlt_back = na.omit(tlt_back)
   tlt_back[, mat := mat]
@@ -191,40 +190,42 @@ backtest = function(task, mat) {
 
 # backtest grid
 performance = backtest_dt[, .(returns = list(backtest(.SD, .BY))), by = "task"]
+performance[1, 2][[1]]
+performance[7, 2][[1]]
 performance_dt = performance[, do.call(rbind, lapply(returns, Performance))]
-performance_dt[var == "Cumulative Return"][order(signal_sum)]
-benchmark_performance$returns
+performance_dt = performance_dt[var == "Cumulative Return"][order(strategy_sum)]
 
 # visualize histogram of perfromances by signal_sum and add vertical line for benchmark
-ggplot(performance_dt[var == "Cumulative Return"], aes(signal_sum)) +
+ggplot(performance_dt, aes(strategy_sum)) +
   geom_histogram(bins = 50) +
   geom_vline(xintercept = benchmark_performance$returns, color = "red")
   # facet_wrap(~ mat, ncol = 2)
 
 # performance acroos maturity and horizont
-performance[, `:=`(
+performance_dt[, `:=`(
   maturiy = as.factor(gsub("m|_.*", "", mat)),
   horizont = as.factor(gsub(".*_", "", mat))
 )]
-performance[, unique(maturiy)]
-lvls = c("1", "2", "3", "4", "6", "12", "24", "36", "60", "120", "240", "360")
-performance[, maturiy := factor(maturiy, levels = lvls)]
-performance[, unique(horizont)]
-performance[, horizont := factor(horizont, levels = c("1", "3", "6", "12"))]
-ggplot(performance[var == "Cumulative Return"], aes(maturiy, signal_sum)) +
+performance_dt[, unique(maturiy)]
+lvls = c("24", "36", "60", "84", "120", "240", "360")
+performance_dt[, maturiy := factor(maturiy, levels = lvls)]
+performance_dt[, unique(horizont)]
+performance_dt[, horizont := factor(horizont, levels = c("1"))]
+ggplot(performance_dt, aes(maturiy, strategy_sum)) +
   geom_boxplot() +
   facet_wrap(~ horizont, ncol = 4)
 
 # individual backtests
-best_ind = performance_dt[var == "Cumulative Return", which.max(signal_sum)]
-best = performance[best_ind, returns][[1]]
+task_best = performance_dt[which.max(strategy_sum), paste0("m", maturiy, "_", horizont)]
+best = performance[task == task_best, returns][[1]]
 charts.PerformanceSummary(as.xts.data.table(best[, 1:5]))
 
 
 # ENSAMBLE METHODS --------------------------------------------------------
 # ensamble for one month
-predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
-predictions_ensamble = predictions_ensamble[, .(response = sum(response)), by = month]
+predictions_ensamble = backtest_dt[task %notin% c("m360_1", "m240_1", "m120_1")] # OPTIONAL
+predictions_ensamble = predictions_ensamble[gsub(".*_", "", task) == 1, .(month, learner, response)]
+predictions_ensamble = predictions_ensamble[, .(response = median(response)), by = month]
 predictions_ensamble[, signal_strat := response >= 0]
 tlt_back = merge(tlt_m, predictions_ensamble, by = "month", all.x = TRUE, all.y = FALSE)
 tlt_back = tlt_back[, `:=`(strategy = returns * shift(signal_strat))]
