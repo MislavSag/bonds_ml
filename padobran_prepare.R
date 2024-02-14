@@ -16,7 +16,7 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-  dt = storage_read_csv(cont, "bonds-predictors-20240208.csv")
+  dt = storage_read_csv(cont, "bonds-predictors-20240214.csv")
 dt = as.data.table(dt)
 
 
@@ -35,12 +35,15 @@ task_params = task_params[idx, ]
 
 # define predictors
 cols = colnames(dt)
-predictors = cols[(which(cols == "excess_return_12")+1):length(cols)]
+non_predictors = c(
+  "date", "maturity", "yield", "maturity_months", "maturity_years", "price",
+  "price_log", "excess_return_1", "excess_return_3", "excess_return_6", "excess_return_12")
+predictors = setdiff(cols, non_predictors)
 
 # help function to prepare data for specific maturity and horizont
 id_cols = c("date", "maturity")
 tasks = lapply(1:nrow(task_params), function(i) {
-  # i = 1
+  # i = 12
   horizont_ = task_params[i, "horizont"]
   mat_ = task_params[i, "maturity"]
   target_ = paste0("excess_return_", horizont_)
@@ -146,7 +149,8 @@ nested_cv_expanding = function(task,
 
 # create list of cvs
 cvs = lapply(tasks, function(tsk_) {
-  # tsk_ = tasks[[3]]
+  print(tsk_$id)
+  # tsk_ = tasks[[1]]
   horizont_ = as.integer(gsub("excess_return_", "", tsk_$target_names))
   maturity_ = as.integer(gsub("m|_.*", "", tsk_$id))
   min_date = tsk_$backend$data(rows = tsk_$row_ids, cols = "date")
@@ -236,7 +240,7 @@ filters_ = list(
   po("filter", flt("mrmr"), filter.nfeat = 3),
   po("filter", flt("njmim"), filter.nfeat = 3),
   po("filter", flt("cmim"), filter.nfeat = 3),
-  po("filter", flt("carscore"), filter.nfeat = 3), # UNCOMMENT LATER< SLOWER SO COMMENTED FOR DEVELOPING
+  po("filter", flt("carscore"), filter.nfeat = 3),
   po("filter", flt("information_gain"), filter.nfeat = 3),
   po("filter", filter = flt("relief"), filter.nfeat = 3),
   po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
@@ -255,10 +259,16 @@ graph_template =
   po("unbranch", id = "scale_unbranch") %>>%
   gr %>>%
   graph_filters %>>%
+  # modelmatrix
+  po("branch", options = c("nop_interaction", "modelmatrix"), id = "interaction_branch") %>>%
+  gunion(list(
+    po("nop", id = "nop_interaction"),
+    po("modelmatrix", formula = ~ . ^ 2))) %>>%
+  po("unbranch", id = "interaction_unbranch") %>>%
   po("removeconstants", id = "removeconstants_3", ratio = 0)
 
 # hyperparameters template
-graph_template$param_set
+as.data.table(graph_template$param_set)[101:120]
 search_space_template = ps(
   dropcorr.cutoff = p_fct(
     levels = c("0.80", "0.90", "0.95", "0.99"),
@@ -271,7 +281,9 @@ search_space_template = ps(
     }
   ),
   # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale"))
+  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+  # interaction
+  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
 )
 
 # random forest graph
@@ -334,11 +346,24 @@ search_space_glmnet = ps(
   ),
   # scaling
   scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+  # interaction
+  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
   # learner
   regr.glmnet.s     = p_int(lower = 5, upper = 30),
   regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
 )
 
+# nnet graph
+graph_nnet = graph_template %>>%
+  po("learner", learner = lrn("regr.nnet", MaxNWts = 50000))
+graph_nnet = as_learner(graph_nnet)
+as.data.table(graph_nnet$param_set)[, .(id, class, lower, upper, levels)]
+search_space_nnet = search_space_template$clone()
+search_space_nnet$add(
+  ps(regr.nnet.size  = p_int(lower = 2, upper = 15),
+     regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
+     regr.nnet.maxit = p_int(lower = 50, upper = 500))
+)
 
 
 # BATCHMARK ---------------------------------------------------------------
@@ -379,7 +404,7 @@ designs_l = lapply(seq_along(cvs), function(i) {
     tuner_ = tnr("random_search")
     # tuner_   = tnr("hyperband", eta = 5)
     # tuner_   = tnr("mbo")
-    term_evals = 10
+    term_evals = 50
 
     # auto tuner rf
     at_rf = auto_tuner(
@@ -403,6 +428,28 @@ designs_l = lapply(seq_along(cvs), function(i) {
       term_evals = term_evals
     )
 
+    # auto tuner glmnet
+    at_glmnet = auto_tuner(
+      tuner = tuner_,
+      learner = graph_glmnet,
+      resampling = custom_,
+      measure = measure_,
+      search_space = search_space_glmnet,
+      # terminator = trm("none")
+      term_evals = term_evals
+    )
+
+    # auto tuner nnet
+    at_nnet = auto_tuner(
+      tuner = tuner_,
+      learner = graph_nnet,
+      resampling = custom_,
+      measure = measure_,
+      search_space = search_space_nnet,
+      # terminator = trm("none")
+      term_evals = term_evals
+    )
+
     # outer resampling
     customo_ = rsmp("custom")
     customo_$id = paste0("custom_", cv_inner$iters, "_", j)
@@ -411,7 +458,7 @@ designs_l = lapply(seq_along(cvs), function(i) {
     # nested CV for one round
     design = benchmark_grid(
       tasks = task_,
-      learners = list(at_rf, at_xgboost),
+      learners = list(at_rf, at_xgboost, at_glmnet, at_nnet),
       resamplings = customo_
     )
   # populate registry with problems and algorithms to form the jobs
@@ -424,7 +471,7 @@ designs = do.call(rbind, designs_l)
 
 # exp dir
 if (interactive()) {
-  dirname_ = "experiments_test"
+  dirname_ = "experiments_test_2"
   if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
 } else {
   dirname_ = "experiments"

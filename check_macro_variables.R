@@ -7,12 +7,30 @@ library(fs)
 # Filter sries id's with frequency
 
 # Import fred series
-fred_dt = fread("F:/data/macro/fred_cleaned.csv")
+fred_dt = fread("F:/data/macro/fred.csv")
+
+# Check dupplicates. I just want to check how many duplicates area there
+# Otherwise, this is not necessary step. Later when I will move function to
+# server to make clean fred_dt I can remove this step.
+dup_realtime_start = fred_dt[, .N, by = .(series_id, realtime_start)]
+dup_realtime_start[, (sum(N) - nrow(dup_realtime_start)) / nrow(fred_dt)]
+duplicates_date = fred_dt[, .N, by = .(series_id, date)]
+duplicates_date[, (sum(N) - nrow(duplicates_date)) / nrow(fred_dt)]
+
+# Create date column
+fred_dt[, date_real := date]
+fred_dt[vintage == 1, date_real := realtime_start]
+fred_dt[, realtime_start := NULL]
+
+# keep unique dates by keeping first observation
+fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
 
 # remove observations where there is no data 4 months before today
-cols_keep = fred_dt[ , .(keep = any(max(date_real) > (Sys.Date()-365/4))), by=series_id]
+cols_keep = fred_dt[ , .(keep = any(max(date_real) > (Sys.Date()-365/6))), by=series_id]
 cols_keep = cols_keep[keep == TRUE, series_id]
-fred_dt[, length(unique(series_id))] - length(cols_keep)
+l_1 = fred_dt[, length(unique(series_id))]
+l_2 = length(cols_keep)
+(l_2 / l_1) * 100
 fred_dt = fred_dt[series_id %chin% cols_keep]
 
 # downsample to monthly frequency
@@ -33,6 +51,7 @@ fred_dt = merge(ids, fred_dt, by = c("series_id", "month"), all.x = TRUE, all.y 
 
 # free memory
 rm(list = c("ids", "dates", "all_ids", "cols_keep"))
+gc()
 
 # order by date
 setorder(fred_dt, series_id, month)

@@ -17,7 +17,7 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 
 # globals
-PATH = "./experiments_test" # "F:/padobran/bonds_ml/"
+PATH = "F:/padobran/bondsml_2" # "F:/padobran/bonds_ml/"
 
 # load registry
 reg = loadRegistry(PATH, work.dir=PATH)
@@ -190,8 +190,6 @@ backtest = function(task, mat) {
 
 # backtest grid
 performance = backtest_dt[, .(returns = list(backtest(.SD, .BY))), by = "task"]
-performance[1, 2][[1]]
-performance[7, 2][[1]]
 performance_dt = performance[, do.call(rbind, lapply(returns, Performance))]
 performance_dt = performance_dt[var == "Cumulative Return"][order(strategy_sum)]
 
@@ -207,24 +205,22 @@ performance_dt[, `:=`(
   horizont = as.factor(gsub(".*_", "", mat))
 )]
 performance_dt[, unique(maturiy)]
-lvls = c("24", "36", "60", "84", "120", "240", "360")
-performance_dt[, maturiy := factor(maturiy, levels = lvls)]
-performance_dt[, unique(horizont)]
+lvls = as.character(sort(as.integer(levels(performance_dt[, unique(maturiy)]))))
+performance_dt[, maturiy := factor(maturiy, lvls)]
 performance_dt[, horizont := factor(horizont, levels = c("1"))]
 ggplot(performance_dt, aes(maturiy, strategy_sum)) +
   geom_boxplot() +
   facet_wrap(~ horizont, ncol = 4)
 
 # individual backtests
-task_best = performance_dt[which.max(strategy_sum), paste0("m", maturiy, "_", horizont)]
+task_best = performance_dt[which.max(strategy_ranger), paste0("m", maturiy, "_", horizont)]
 best = performance[task == task_best, returns][[1]]
 charts.PerformanceSummary(as.xts.data.table(best[, 1:5]))
 
 
 # ENSAMBLE METHODS --------------------------------------------------------
 # ensamble for one month
-predictions_ensamble = backtest_dt[task %notin% c("m360_1", "m240_1", "m120_1")] # OPTIONAL
-predictions_ensamble = predictions_ensamble[gsub(".*_", "", task) == 1, .(month, learner, response)]
+predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
 predictions_ensamble = predictions_ensamble[, .(response = median(response)), by = month]
 predictions_ensamble[, signal_strat := response >= 0]
 tlt_back = merge(tlt_m, predictions_ensamble, by = "month", all.x = TRUE, all.y = FALSE)

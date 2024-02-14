@@ -4,8 +4,8 @@
 #PBS -N BondsML
 #PBS -l ncpus=4
 #PBS -l mem=4GB
-#PBS -J 1-44
-#PBS -o experiments_test2/logs
+#PBS -J 1-88
+#PBS -o experiments_test_2/logs
 #PBS -j oe
 
 cd ${PBS_O_WORKDIR}

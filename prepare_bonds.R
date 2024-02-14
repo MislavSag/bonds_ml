@@ -86,8 +86,8 @@ excess_returns(12)
 # Import data we need
 fred_columns = fread("data/fred_col.csv")
 fred_columns[, unique(start_date)]
-# fred_columns = fred_columns[start_date == min(start_date), cols]
-fred_columns = fred_columns[start_date == as.Date("1990-01-01"), cols]
+fred_columns = fred_columns[start_date == min(start_date), cols]
+# fred_columns = fred_columns[start_date == as.Date("1990-01-01"), cols]
 
 # Import fred series
 fred_dt = fread("data/fred_sample.csv")

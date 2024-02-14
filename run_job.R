@@ -121,7 +121,7 @@ UpdateBuffer = R6Class(
 # RUN JOB -----------------------------------------------------------------
 # load registry
 if (interactive()) {
-  reg = loadRegistry("experiments_test")
+  reg = loadRegistry("experiments_test_2")
 } else {
   reg = loadRegistry("experiments")
 }
