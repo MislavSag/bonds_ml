@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #PBS -N Bonds
-#PBS -l mem=32GB
+#PBS -l mem=64GB
 
 cd ${PBS_O_WORKDIR}
 apptainer run image.sif padobran_prepare.R
