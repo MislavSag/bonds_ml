@@ -3,7 +3,7 @@
 #PBS -N BondsML
 #PBS -l ncpus=4
 #PBS -l mem=4GB
-#PBS -J 1-1306s
+#PBS -J 1-1306
 #PBS -o experiments/logs
 #PBS -j oe
 
