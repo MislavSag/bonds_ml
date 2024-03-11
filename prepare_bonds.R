@@ -3,6 +3,7 @@ library(lubridate)
 library(forecast)
 library(findata)
 library(AzureStor)
+library(findata)
 
 
 
@@ -89,9 +90,25 @@ fred_columns[, unique(start_date)]
 fred_columns = fred_columns[start_date == min(start_date), cols]
 # fred_columns = fred_columns[start_date == as.Date("1990-01-01"), cols]
 
-# Import fred series
-fred_dt = fread("data/fred_sample.csv")
-fred_dt = fred_dt[series_id %chin% fred_columns]
+# Import fresh data
+Sys.setenv("FRED-KEY" = "fb7e8cbac4b84762980f507906176c3c")
+temp_dir = tempdir()
+fred = MacroData$new(temp_dir)
+fred$bulk_fred(fred_columns)
+files_ = dir_ls(path(temp_dir, "fred"))
+fred_dt = lapply(files_, fread)
+fred_dt = lapply(fred_dt, function(dt_) dt_[, value := as.numeric(value)])
+fred_dt = rbindlist(fred_dt)
+fred_dt[, date_real := date]
+fred_dt[vintage == 1, date_real := realtime_start]
+fred_dt[, realtime_start := NULL]
+fred_dt[, max(date_real)]
+fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
+fred_dt[, month := ceiling_date(date_real, "month")]
+fred_dt = fred_dt[, last(.SD), by = c("series_id", "month")]
+fred_dt = fred_dt[, .(series_id, month, value)]
+fred_dt = fred_dt[month > as.Date("1961-05-01") & month < as.Date("2024-04-01")]
+setorder(fred_dt, series_id, month)
 
 # diff if necessary
 fred_dt = fred_dt[, ndif := ndiffs(value), by = series_id]
@@ -106,8 +123,12 @@ fred_dt = dcast(fred_dt[, .(month, series_id, value)],
 # Change column name to be the same as in other objects
 setnames(fred_dt, "month", "date")
 
+# Fill by nalocf
+setnafill(fred_dt, "locf")
+
 # Remove missing vlaues
 fred_dt = na.omit(fred_dt)
+setorder(fred_dt, date)
 
 # predictors fred
 predictors_fred = colnames(fred_dt)[2:ncol(fred_dt)]

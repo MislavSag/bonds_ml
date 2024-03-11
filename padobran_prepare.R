@@ -10,6 +10,12 @@ library(finautoml)
 
 
 
+
+# PARAMS ------------------------------------------------------------------
+# Live
+LIVE = FALSE
+
+
 # DATA --------------------------------------------------------------------
 # downlaod data from Azure blob
 blob_key = readLines('./blob_key.txt')
@@ -161,8 +167,8 @@ cvs = lapply(tasks, function(tsk_) {
     train_length_start = train_length,
     tune_length = 6,
     test_length = 1,
-    gap_tune = horizont_, # TODO: think if here is -1. Without -1 is conservative
-    gap_test = horizont_  # TODO: think if here is -1. Without -1 is conservative
+    gap_tune = 0, # horizont_, # TODO: think if here is -1. Without -1 is conservative
+    gap_test = 0 #  horizont_  # TODO: think if here is -1. Without -1 is conservative
   )
 })
 
@@ -383,7 +389,14 @@ designs_l = lapply(seq_along(cvs), function(i) {
   cv_outer = cv_$custom_outer
   cat("Number of iterations fo cv inner is ", cv_inner$iters, "\n")
 
-  designs_cv_l = lapply(1:cv_inner$iters, function(j) {
+  # Only last for Live
+  if (LIVE) {
+    loop_ind = cv_inner$iters
+  } else {
+    loop_ind = 1:cv_inner$iters
+  }
+
+  designs_cv_l = lapply(loop_ind, function(j) {
     # debug
     # j = 1
     print(cv_inner$id)
@@ -470,11 +483,17 @@ designs_l = lapply(seq_along(cvs), function(i) {
 designs = do.call(rbind, designs_l)
 
 # exp dir
-if (interactive()) {
-  dirname_ = "experiments_test_2"
+if (LIVE) {
+  dirname_ = "experiments_live"
   if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
+
 } else {
-  dirname_ = "experiments"
+  if (interactive()) {
+    dirname_ = "experiments_test_2"
+    if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
+  } else {
+    dirname_ = "experiments"
+  }
 }
 
 # create registry
@@ -488,15 +507,34 @@ reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
 print("Batchmark")
 batchmark(designs, reg = reg)
 
-# save registry
-print("Save registry")
-saveRegistry(reg = reg)
-
 # create sh file
-sh_file = sprintf("
+if (LIVE) {
+  # load registry
+  # reg = loadRegistry("experiments_live", writeable = TRUE)
+  # test 1 job
+  result = testJob(1, external = TRUE, reg = reg)
+
+  # get nondone jobs
+  ids = findNotDone(reg = reg)
+
+  # set up cluster (for local it is parallel)
+  cf = makeClusterFunctionsSocket(ncpus = 8L)
+  reg$cluster.functions = cf
+  saveRegistry(reg = reg)
+
+  # define resources and submit jobs
+  resources = list(ncpus = 2, memory = 8000)
+  submitJobs(ids = ids$job.id, resources = resources, reg = reg)
+} else {
+  # save registry
+  print("Save registry")
+  saveRegistry(reg = reg)
+
+  sh_file = sprintf(
+    "
 #!/bin/bash
 
-#PBS -N BondsML
+#PBS -N ZSEML
 #PBS -l ncpus=4
 #PBS -l mem=4GB
 #PBS -J 1-%d
@@ -505,7 +543,10 @@ sh_file = sprintf("
 
 cd ${PBS_O_WORKDIR}
 apptainer run image.sif run_job.R 0
-", tail(reg$defs[, def.id], 1), dirname_)
-sh_file_name = "jobs.sh"
-file.create(sh_file_name)
-writeLines(sh_file, sh_file_name)
+",
+    nrow(designs, dirname_)
+    )
+  sh_file_name = "jobs.sh"
+  file.create(sh_file_name)
+  writeLines(sh_file, sh_file_name)
+}

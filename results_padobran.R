@@ -9,6 +9,7 @@ library(AzureStor)
 library(future.apply)
 library(lubridate)
 library(ggplot2)
+library(matrixStats)
 
 
 # creds
@@ -17,16 +18,17 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 
 # globals
-PATH = "F:/padobran/bondsml_3" # "F:/padobran/bonds_ml/"
+# PATH = "F:/padobran/bondsml_4" # "F:/padobran/bonds_ml/"
+PATH = "C:/Users/Mislav/Documents/GitHub/bonds_ml/experiments_live"
 
 # load registry
 reg = loadRegistry(PATH, work.dir=PATH)
 
-# used memory
+# Used memory
 reg$status[!is.na(mem.used)]
 reg$status[, max(mem.used, na.rm = TRUE)]
 
-# done jobs
+# Done jobs
 results_files = fs::path_ext_remove(fs::path_file(dir_ls(fs::path(PATH, "results"))))
 ids_done = findDone(reg=reg)
 ids_done = ids_done[job.id %in% results_files]
@@ -116,7 +118,7 @@ get_sec = function(symbol) {
 }
 tlt_dt = get_sec("tlt")
 
-# downsample TLT to monthly
+# Downsample TLT to monthly
 tlt_m = copy(tlt_dt)
 tlt_m[, month := ceiling_date(date, "month")]
 # tlt_m[, close := tail(close, 1), by = month]
@@ -162,24 +164,41 @@ Performance <- function(dt) {
 }
 
 # backtest function
-backtest = function(task, mat) {
+backtest = function(task, mat, live = TRUE) {
   print(mat)
   # task = backtest_dt[task == "m24_1"]
   # mat = "m24_1"
   predictions_wide = task[, .(month, learner, response)]
   predictions_wide = dcast(predictions_wide, month ~ learner, value.var = "response")
-  predictions_wide[, res_sum := ranger + xgboost]
+  predictions_wide[, res_sum := rowSums2(as.matrix(.SD)),
+                   .SDcols = c("ranger", "xgboost", "nnet", "glmnet")]
   predictions_wide[, signal_ranger := ranger >= 0]
   predictions_wide[, signal_xgboost := xgboost >= 0]
-  predictions_wide[, signal_sum := (xgboost + ranger) >= 0]
+  predictions_wide[, signal_glmnet := glmnet >= 0]
+  predictions_wide[, signal_nnet := nnet >= 0]
+  predictions_wide[, signal_sum := (xgboost + ranger + nnet + glmnet) >= 0]
   tlt_back = merge(tlt_m, predictions_wide, by = "month", all.x = TRUE, all.y = FALSE)
-  tlt_back = tlt_back[, `:=`(
-    strategy_ranger = returns * shift(signal_ranger),
-    strategy_xgboost = returns * shift(signal_xgboost),
-    strategy_sum = returns * shift(signal_sum)
-  )]
+  if (live) {
+    tlt_back = tlt_back[, `:=`(
+      strategy_ranger = returns * signal_ranger,
+      strategy_xgboost = returns * signal_xgboost,
+      strategy_nnet = returns * signal_nnet,
+      strategy_glmnet = returns * signal_glmnet,
+      strategy_sum = returns * signal_sum
+    )]
+  } else {
+    tlt_back = tlt_back[, `:=`(
+      strategy_ranger = returns * shift(signal_ranger),
+      strategy_xgboost = returns * shift(signal_xgboost),
+      strategy_nnet = returns * shift(signal_nnet),
+      strategy_glmnet = returns * shift(signal_glmnet),
+      strategy_sum = returns * shift(signal_sum)
+    )]
+  }
   cols = c("month", "returns", "strategy_ranger", "strategy_xgboost",
-           "strategy_sum", "signal_ranger", "signal_xgboost", "signal_sum")
+           "strategy_nnet", "strategy_glmnet",
+           "strategy_sum", "signal_ranger", "signal_xgboost",
+           "signal_nnet", "signal_glmnet", "signal_sum")
   tlt_back = tlt_back[, ..cols]
   tlt_back = na.omit(tlt_back)
   tlt_back[, mat := mat]
@@ -208,19 +227,23 @@ performance_dt[, unique(maturiy)]
 lvls = as.character(sort(as.integer(levels(performance_dt[, unique(maturiy)]))))
 performance_dt[, maturiy := factor(maturiy, lvls)]
 performance_dt[, horizont := factor(horizont, levels = c("1"))]
-ggplot(performance_dt, aes(maturiy, strategy_sum)) +
+cols = colnames(performance_dt)[c(3:7, 9)]
+performance_dt_plot = melt(performance_dt[, ..cols],
+                           id.vars = c("maturiy"))
+ggplot(performance_dt_plot, aes(maturiy, value)) +
   geom_boxplot() +
-  facet_wrap(~ horizont, ncol = 4)
+  geom_hline(yintercept = benchmark_performance$returns, color = "red")
 
 # individual backtests
-task_best = performance_dt[which.max(strategy_ranger), paste0("m", maturiy, "_", horizont)]
+task_best = performance_dt[which.max(strategy_sum), paste0("m", maturiy, "_", horizont)]
 best = performance[task == task_best, returns][[1]]
-charts.PerformanceSummary(as.xts.data.table(best[, 1:5]))
+charts.PerformanceSummary(as.xts.data.table(best[, 1:7]))
 
 
 # ENSAMBLE METHODS --------------------------------------------------------
 # ensamble for one month
-predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
+predictions_ensamble = backtest_dt[as.integer(gsub("_.*|m", "", task)) < 15][, .(month, learner, response)]
+# predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
 predictions_ensamble = predictions_ensamble[, .(response = median(response)), by = month]
 predictions_ensamble[, signal_strat := response >= 0]
 tlt_back = merge(tlt_m, predictions_ensamble, by = "month", all.x = TRUE, all.y = FALSE)

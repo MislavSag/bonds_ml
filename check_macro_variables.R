@@ -26,7 +26,7 @@ fred_dt[, realtime_start := NULL]
 fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
 
 # remove observations where there is no data 4 months before today
-cols_keep = fred_dt[ , .(keep = any(max(date_real) > (Sys.Date()-365/6))), by=series_id]
+cols_keep = fred_dt[ , .(keep = any(max(date_real) > (Sys.Date()-365))), by=series_id]
 cols_keep = cols_keep[keep == TRUE, series_id]
 l_1 = fred_dt[, length(unique(series_id))]
 l_2 = length(cols_keep)
