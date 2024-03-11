@@ -9,15 +9,13 @@ library(batchtools)
 library(finautoml)
 
 
-
-
 # PARAMS ------------------------------------------------------------------
 # Live
 LIVE = FALSE
 
 
 # DATA --------------------------------------------------------------------
-# downlaod data from Azure blob
+  # downlaod data from Azure blob
 blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
@@ -488,12 +486,13 @@ if (LIVE) {
   if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
 
 } else {
-  if (interactive()) {
-    dirname_ = "experiments_test_2"
-    if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
-  } else {
-    dirname_ = "experiments"
-  }
+  dirname_ = "experiments"
+  # if (interactive()) {
+  #   dirname_ = "experiments_test_2"
+  #   if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
+  # } else {
+  #   dirname_ = "experiments"
+  # }
 }
 
 # create registry
