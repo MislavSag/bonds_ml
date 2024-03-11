@@ -22,7 +22,7 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-  dt = storage_read_csv(cont, "bonds-predictors-20240214.csv")
+dt = storage_read_csv(cont, "bonds-predictors-20240309.csv")
 dt = as.data.table(dt)
 
 
