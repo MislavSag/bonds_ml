@@ -4,7 +4,7 @@ library(forecast)
 library(findata)
 library(AzureStor)
 library(findata)
-
+library(fs)
 
 
 # YIELDS DATA -------------------------------------------------------------
@@ -23,18 +23,18 @@ yields_raw = yields_gen$get_yields()
 yields_raw[, month := as.IDate(ceiling_date(date, "month"))]
 yields = yields_raw[, tail(.SD, 1), by = .(label, month)]
 
-# remove columns we dont need
+# Remove columns we dont need
 yields[, date := NULL]
 
-# change label to be the same as in lw data
+# Change label to be the same as in lw data
 yields[, label := paste0("m", gsub("Y|M_US", "", label))]
 
-# sort
+# Sort
 setnames(yields, c("month", "label", "yield"),
          c("date", "maturity", "yield_treasury"))
 setorder(yields, maturity, date)
 
-# check last date
+# Check last date
 yields[date == max(date)]
 
 # Function to modify the Google Drive URL for direct download
@@ -72,6 +72,7 @@ yieldsadj[, price_log := log(price)]
 
 # calculate excess returns
 excess_returns = function(m = 1) {
+  # m = 1
   setorder(yieldsadj, maturity_months, date)
   yieldsadj[, excess_return := shift(price_log, -m, type = "shift") - price_log, by = maturity]
   setnames(yieldsadj, "excess_return", paste0("excess_return", "_", m))
@@ -81,6 +82,9 @@ excess_returns(1)
 excess_returns(3)
 excess_returns(6)
 excess_returns(12)
+
+# Checks
+yieldsadj[is.na(excess_return_1 & maturity_months < 120)]
 
 
 # MACRO DATA --------------------------------------------------------------
@@ -135,8 +139,12 @@ predictors_fred = colnames(fred_dt)[2:ncol(fred_dt)]
 
 
 # PREDICTORS --------------------------------------------------------------
-# merge yields and macro data
+# Merge yields and macro data
 dt = merge(fred_dt, yieldsadj, by = "date", all.x = TRUE, all.y = FALSE)
+
+# Checks
+dt[, max(date)]
+dt[is.na(excess_return_1 & maturity_months < 120)]
 
 # momentum predictors
 setorder(dt, maturity, date)
@@ -165,8 +173,9 @@ setnames(spa_fact, colnames(spa_fact), gsub(" ", "_", colnames(spa_fact)))
 spa_fact[, date := as.IDate(date)]
 dt = merge(dt, spa_fact, by = "date", all.x = TRUE)
 
-# Remove missing values
-dt = na.omit(dt)
+# Checks
+dt[, max(date)]
+dt[is.na(excess_return_1 & maturity_months < 120)]
 
 # save to Azure
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
@@ -175,4 +184,5 @@ BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
 time_ = strftime(Sys.time(), format = "%Y%m%d")
 file_name = paste0("bonds-predictors-", time_, ".csv")
+print(file_name)
 storage_write_csv(dt, cont, file_name)

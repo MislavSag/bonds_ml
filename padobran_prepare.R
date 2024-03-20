@@ -9,19 +9,38 @@ library(batchtools)
 library(finautoml)
 
 
-# PARAMS ------------------------------------------------------------------
-# Live
-LIVE = FALSE
+
+# COMMAND LINE ARGUMENTS --------------------------------------------------
+if (interactive()) {
+  LIVE = TRUE
+} else {
+  # Import command line arguments
+  args = commandArgs(trailingOnly = TRUE)
+
+  # Ensure there are enough arguments
+  if (length(args) < 1) {
+    stop("Not enough arguments. Please provide LIVE as TRUE or FALSE.")
+  }
+
+  # Assign the arguments to variables
+  cat(args, sep = "\n")
+  LIVE = as.logical(as.integer(args[1]))
+  cat("Argument 1 is ", LIVE)
+}
 
 
 # DATA --------------------------------------------------------------------
-  # downlaod data from Azure blob
+# Downlaod data from Azure blob
 blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-dt = storage_read_csv(cont, "bonds-predictors-20240309.csv")
-dt = as.data.table(dt)
+dt = storage_read_csv(cont, "bonds-predictors-20240319.csv")
+setDT(dt)
+
+# Checks
+dt[, max(date)]
+dt[is.na(excess_return_1 & maturity_months < 120)]
 
 
 # TASKS --------------------------------------------------------
@@ -47,7 +66,7 @@ predictors = setdiff(cols, non_predictors)
 # help function to prepare data for specific maturity and horizont
 id_cols = c("date", "maturity")
 tasks = lapply(1:nrow(task_params), function(i) {
-  # i = 12
+  # i = 11
   horizont_ = task_params[i, "horizont"]
   mat_ = task_params[i, "maturity"]
   target_ = paste0("excess_return_", horizont_)
@@ -507,11 +526,11 @@ print("Batchmark")
 batchmark(designs, reg = reg)
 
 # create sh file
-if (LIVE) {
+if (interactive() && LIVE) {
   # load registry
   # reg = loadRegistry("experiments_live", writeable = TRUE)
   # test 1 job
-  result = testJob(1, external = TRUE, reg = reg)
+  # result = testJob(1, external = TRUE, reg = reg)
 
   # get nondone jobs
   ids = findNotDone(reg = reg)

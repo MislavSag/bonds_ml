@@ -18,8 +18,8 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 
 # globals
-# PATH = "F:/padobran/bondsml_4" # "F:/padobran/bonds_ml/"
-PATH = "C:/Users/Mislav/Documents/GitHub/bonds_ml/experiments_live"
+PATH = "F:/padobran/bondsml_5" # "F:/padobran/bonds_ml/"
+# PATH = "C:/Users/Mislav/Documents/GitHub/bonds_ml/experiments_live"
 
 # load registry
 reg = loadRegistry(PATH, work.dir=PATH)
@@ -237,14 +237,14 @@ ggplot(performance_dt_plot, aes(maturiy, value)) +
 # individual backtests
 task_best = performance_dt[which.max(strategy_sum), paste0("m", maturiy, "_", horizont)]
 best = performance[task == task_best, returns][[1]]
-charts.PerformanceSummary(as.xts.data.table(best[, 1:7]))
+charts.PerformanceSummary(as.xts.data.table(best[, 1:7]), legend())
 
 
 # ENSAMBLE METHODS --------------------------------------------------------
 # ensamble for one month
-predictions_ensamble = backtest_dt[as.integer(gsub("_.*|m", "", task)) < 15][, .(month, learner, response)]
+predictions_ensamble = backtest_dt[, .(month, learner, response)]
 # predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
-predictions_ensamble = predictions_ensamble[, .(response = median(response)), by = month]
+predictions_ensamble = predictions_ensamble[, .(response = median(response, na.rm = TRUE)), by = month]
 predictions_ensamble[, signal_strat := response >= 0]
 tlt_back = merge(tlt_m, predictions_ensamble, by = "month", all.x = TRUE, all.y = FALSE)
 tlt_back = tlt_back[, `:=`(strategy = returns * shift(signal_strat))]
