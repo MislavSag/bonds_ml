@@ -388,6 +388,13 @@ search_space_nnet$add(
      regr.nnet.maxit = p_int(lower = 50, upper = 500))
 )
 
+# Threads
+threads = 2
+set_threads(graph_rf, n = threads)
+set_threads(graph_xgboost, n = threads)
+set_threads(graph_nnet, n = threads)
+set_threads(graph_glmnet, n = threads)
+
 
 # BATCHMARK ---------------------------------------------------------------
 # batchmark
@@ -506,12 +513,6 @@ if (LIVE) {
 
 } else {
   dirname_ = "experiments"
-  # if (interactive()) {
-  #   dirname_ = "experiments_test_2"
-  #   if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
-  # } else {
-  #   dirname_ = "experiments"
-  # }
 }
 
 # create registry

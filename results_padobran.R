@@ -125,6 +125,13 @@ tlt_m[, month := ceiling_date(date, "month")]
 tlt_m = tlt_m[, tail(.SD, 1), by = month]
 tlt_m[, returns := close / shift(close) - 1]
 tlt_m = na.omit(tlt_m)
+tlt_m = rbindlist(list(
+  tlt_m,
+  data.table(month = as.Date("2024-03-01"),
+             date  = as.Date("2024-03-02"),
+             close = 100,
+             returns = 0.01)
+))
 
 
 # BACKTEST ----------------------------------------------------------------

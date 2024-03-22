@@ -4,16 +4,16 @@ library(batchtools)
 
 
 # load registry
-reg = loadRegistry("experiments_test2", writeable = TRUE)
+reg = loadRegistry("experiments_live", writeable = TRUE)
 
 # test 1 job
-result = testJob(1, external = TRUE, reg = reg)
+# result = testJob(1, external = TRUE, reg = reg)
 
 # get nondone jobs
 ids = findNotDone(reg = reg)
 
 # set up cluster (for local it is parallel)
-cf = makeClusterFunctionsSocket(ncpus = 8L)
+cf = makeClusterFunctionsSocket(ncpus = 5L)
 reg$cluster.functions = cf
 saveRegistry(reg = reg)
 
