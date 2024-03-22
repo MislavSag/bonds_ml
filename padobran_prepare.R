@@ -563,7 +563,7 @@ if (interactive() && LIVE) {
 cd ${PBS_O_WORKDIR}
 apptainer run image.sif run_job.R 0
 ",
-    nrow(designs, dirname_)
+    nrow(designs), dirname_
     )
   sh_file_name = "jobs.sh"
   file.create(sh_file_name)
