@@ -5,4 +5,4 @@
 
 
 cd ${PBS_O_WORKDIR}
-apptainer run image.sif padobran_prepare.R 1
+apptainer run image.sif padobran_prepare.R 0
