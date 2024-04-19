@@ -12,7 +12,7 @@ library(finautoml)
 
 # COMMAND LINE ARGUMENTS --------------------------------------------------
 if (interactive()) {
-  LIVE = TRUE
+  LIVE = TRUE # set this
 } else {
   # Import command line arguments
   args = commandArgs(trailingOnly = TRUE)
@@ -35,12 +35,15 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-dt = storage_read_csv(cont, "bonds-predictors-20240319.csv")
+dt = storage_read_csv(cont, "bonds-predictors-month-20240418.csv")
 setDT(dt)
 
 # Checks
+dt[, min(date)]
 dt[, max(date)]
-dt[is.na(excess_return_1 & maturity_months < 120)]
+dim(dt[!is.na(excess_return_1) & maturity_months < 12])
+dim(dt[!is.na(excess_return_1) & maturity_months < 120])
+dim(dt[!is.na(excess_return_1) & maturity_months < 240])
 
 
 # TASKS --------------------------------------------------------
@@ -56,23 +59,27 @@ task_params = task_params[task_params$horizont == "1", ]
 idx = as.integer(gsub("m", "", task_params$maturity)) < 240
 task_params = task_params[idx, ]
 
-# define predictors
+# Define predictors
 cols = colnames(dt)
 non_predictors = c(
   "date", "maturity", "yield", "maturity_months", "maturity_years", "price",
-  "price_log", "excess_return_1", "excess_return_3", "excess_return_6", "excess_return_12")
+  "price_log", "excess_return_1", "excess_return_3", "excess_return_6",
+  "excess_return_12")
 predictors = setdiff(cols, non_predictors)
 
 # help function to prepare data for specific maturity and horizont
 id_cols = c("date", "maturity")
 tasks = lapply(1:nrow(task_params), function(i) {
-  # i = 11
+  # i = 1
   horizont_ = task_params[i, "horizont"]
   mat_ = task_params[i, "maturity"]
   target_ = paste0("excess_return_", horizont_)
   cols_ = c(id_cols, target_, predictors)
   dt_ = dt[, ..cols_]
   dt_ = dt_[maturity == mat_]
+  # Set last target to 0, so we can have it for prediction
+  # dt_[.N, excess_return_1 := 0]
+
   dt_ = na.omit(dt_)
   dt_[, date := as.POSIXct(date, tz = "UTC")]
   tsk_ = as_task_regr(dt_,
@@ -532,6 +539,8 @@ if (interactive() && LIVE) {
   # reg = loadRegistry("experiments_live", writeable = TRUE)
   # test 1 job
   # result = testJob(1, external = TRUE, reg = reg)
+  # user  system elapsed
+  # 0.70    0.72  781.16
 
   # get nondone jobs
   ids = findNotDone(reg = reg)
@@ -568,4 +577,19 @@ apptainer run image.sif run_job.R 0
   sh_file_name = "jobs.sh"
   file.create(sh_file_name)
   writeLines(sh_file, sh_file_name)
+}
+
+# Inspect individual result
+if (LIVE) {
+  results_live = reduceResultsBatchmark(reg = reg)
+  results_live_dt = as.data.table(results_live)
+  head(results_live_dt)
+
+  # results_dt = cbind.data.frame(
+  #   row_id   = result$prediction$test$row_ids,
+  #   truth    = result$prediction$test$truth,
+  #   response = result$prediction$test$response
+  # )
+  # setDT(results_dt)
+
 }

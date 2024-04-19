@@ -2,9 +2,11 @@ library(data.table)
 library(lubridate)
 library(forecast)
 library(fs)
+library(glue)
 
 
-# Filter sries id's with frequency
+# Parameters
+FREQ = "month" # Can be week or month
 
 # Import fred series
 fred_dt = fread("F:/data/macro/fred.csv")
@@ -22,10 +24,13 @@ fred_dt[, date_real := date]
 fred_dt[vintage == 1, date_real := realtime_start]
 fred_dt[, realtime_start := NULL]
 
+# Check last date
+fred_dt[, max(date)]
+
 # keep unique dates by keeping first observation
 fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
 
-# remove observations where there is no data 4 months before today
+# remove observations where there is no data 6 months before today
 cols_keep = fred_dt[ , .(keep = any(max(date_real) > (Sys.Date()-365))), by=series_id]
 cols_keep = cols_keep[keep == TRUE, series_id]
 l_1 = fred_dt[, length(unique(series_id))]
@@ -33,28 +38,36 @@ l_2 = length(cols_keep)
 (l_2 / l_1) * 100
 fred_dt = fred_dt[series_id %chin% cols_keep]
 
-# downsample to monthly frequency
-fred_dt[, month := ceiling_date(date_real, "month")]
-fred_dt = fred_dt[, last(.SD), by = c("series_id", "month")]
+# Downsample to FREQ frequency
+fred_dt[, x := ceiling_date(date_real, FREQ), env = list(x = FREQ)]
+fred_dt[, all(date_real < x), env = list(x = FREQ)]
+setorderv(fred_dt, c("series_id", FREQ))
+fred_dt = fred_dt[, last(.SD), by = c("series_id", FREQ)]
 
-# select columns we need
-fred_dt = fred_dt[, .(series_id, month, value)]
+# Select columns we need
+cols_keep = c("series_id", FREQ, "value")
+fred_dt = fred_dt[, ..cols_keep]
 
-# filter by month
-fred_dt = fred_dt[month > as.Date("1961-05-01")]
+# Filter by FREQ
+fred_dt = fred_dt[x > as.Date("1961-05-01"), env = list(x = FREQ)]
 
-# add all dates to all series (there is no difference, but for clarity)
-dates = fred_dt[month > as.Date("1961-05-01"), unique(month)]
+# Add all dates to all series (there is no difference, but for clarity)
+dates = fred_dt[x > as.Date("1961-05-01"), unique(x), env = list(x = FREQ)]
 all_ids = fred_dt[, unique(series_id)]
-ids = CJ(series_id = all_ids, month = dates, sorted=FALSE)
-fred_dt = merge(ids, fred_dt, by = c("series_id", "month"), all.x = TRUE, all.y = FALSE)
+if (FREQ == "week") {
+  ids = CJ(series_id = all_ids, week = dates, sorted=FALSE)
+} else if (FREQ == "month") {
+  ids = CJ(series_id = all_ids, month = dates, sorted=FALSE)
+}
+by_cols = c("series_id", FREQ)
+fred_dt = merge(ids, fred_dt, by = by_cols, all.x = TRUE, all.y = FALSE)
 
 # free memory
 rm(list = c("ids", "dates", "all_ids", "cols_keep"))
 gc()
 
 # order by date
-setorder(fred_dt, series_id, month)
+setorderv(fred_dt, c("series_id", FREQ))
 
 # locf data
 fred_dt[, value := nafill(value, type = "locf"), by = series_id]
@@ -70,14 +83,30 @@ for (i in seq_along(dates_start)) {
   d = dates_start[i]
 
   # keep only series_id which doesnt have missing values
-  check_na = fred_dt[month >= d, any(is.na(value)), by = series_id]
+  check_na = fred_dt[x >= d, any(is.na(value)), by = series_id, env = list(x = FREQ)]
   columns_save[[i]] = fred_dt[, .(start_date = d, cols = check_na[V1 == FALSE, series_id])]
 }
 columns_save = rbindlist(columns_save)
 
-# final dt object with sampled data
+# Final dt object with sampled data
 fred_sample = fred_dt[series_id %chin% columns_save[, unique(cols)]]
 
-# save final objects
-fwrite(columns_save, "data/fred_col.csv")
-fwrite(fred_sample, "data/fred_sample.csv")
+# Save final objects
+fwrite(columns_save, glue("data/fred_col_{FREQ}.csv"))
+fwrite(fred_sample, glue("data/fred_sample_{FREQ}.csv"))
+
+
+# CHECKS ------------------------------------------------------------------
+# Import columns for week and months
+fred_col_week  = fread("data/fred_col_week.csv")
+fred_col_month = fread("data/fred_col_month.csv")
+
+# Import data for week and month
+fred_week  = fread("data/fred_sample_week.csv")
+fred_month = fread("data/fred_sample_month.csv")
+
+# Compare fred_col_week and fred_col_month
+identical(fred_col_week, fred_col_month)
+fred_week
+fred_month
+

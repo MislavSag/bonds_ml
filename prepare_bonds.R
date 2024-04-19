@@ -5,6 +5,14 @@ library(findata)
 library(AzureStor)
 library(findata)
 library(fs)
+library(glue)
+
+
+# PARAMETERS --------------------------------------------------------------
+FREQ   = "month" # can be week or month
+# start date, can be one of
+# fread(glue("data/fred_col_month.csv"))[, unique(start_date)]
+STARTD = as.Date("1961-06-01")
 
 
 # YIELDS DATA -------------------------------------------------------------
@@ -89,14 +97,17 @@ yieldsadj[is.na(excess_return_1 & maturity_months < 120)]
 
 # MACRO DATA --------------------------------------------------------------
 # Import data we need
-fred_columns = fread("data/fred_col.csv")
+fred_columns = fread(glue("data/fred_col_month.csv"))
 fred_columns[, unique(start_date)]
-fred_columns = fred_columns[start_date == min(start_date), cols]
-# fred_columns = fred_columns[start_date == as.Date("1990-01-01"), cols]
+fred_columns = fred_columns[start_date == STARTD, cols]
 
 # Import fresh data
 Sys.setenv("FRED-KEY" = "fb7e8cbac4b84762980f507906176c3c")
 temp_dir = tempdir()
+if (fs::dir_exists(temp_dir)) {
+  dir_delete(temp_dir)
+  dir_create(temp_dir)
+}
 fred = MacroData$new(temp_dir)
 fred$bulk_fred(fred_columns)
 files_ = dir_ls(path(temp_dir, "fred"))
@@ -108,24 +119,43 @@ fred_dt[vintage == 1, date_real := realtime_start]
 fred_dt[, realtime_start := NULL]
 fred_dt[, max(date_real)]
 fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
-fred_dt[, month := ceiling_date(date_real, "month")]
-fred_dt = fred_dt[, last(.SD), by = c("series_id", "month")]
-fred_dt = fred_dt[, .(series_id, month, value)]
-fred_dt = fred_dt[month > as.Date("1961-05-01") & month < as.Date("2024-04-01")]
-setorder(fred_dt, series_id, month)
 
-# diff if necessary
+ceiling_biweek <- function(date) {
+  weeks_since_epoch <- floor(as.numeric(difftime(date, as.Date('1970-01-05'), units = "weeks")) / 2)
+  next_biweek_start <- as.Date('1970-01-05') + weeks(weeks_since_epoch * 2 + 2)
+  return(next_biweek_start)
+}
+
+if (FREQ == "biweek") {
+  fred_dt[, biweek := ceiling_biweek(date_real)]
+} else if (FREQ == "month") {
+  fred_dt[, month := ceiling_date(date_real, "month")]
+}
+setorderv(fred_dt, c("series_id", FREQ))
+fred_dt = fred_dt[, last(.SD), by = c("series_id", FREQ)]
+cols_keep = c("series_id", FREQ, "value")
+fred_dt = fred_dt[, ..cols_keep]
+fred_dt = fred_dt[x > as.Date("1961-05-01"), env = list(x = FREQ)]
+setorderv(fred_dt, c("series_id", FREQ))
+
+# Diff if necessary
 fred_dt = fred_dt[, ndif := ndiffs(value), by = series_id]
 fred_dt[, unique(ndif), by = series_id][, .N, by = V1]
 fred_dt[ndif > 0, value_diff := c(rep(NA, unique(ndif)), diff(value, unique(ndif))), by = series_id]
 
-# reshape
-fred_dt = dcast(fred_dt[, .(month, series_id, value)],
-                month ~ series_id,
-                value.var = "value")
+# Reshape
+if (FREQ == "month") {
+  fred_dt = dcast(fred_dt[, .(month, series_id, value)],
+                  month ~ series_id,
+                  value.var = "value")
+} else if (FREQ == "biweek") {
+  fred_dt = dcast(fred_dt[, .(biweek, series_id, value)],
+                  biweek ~ series_id,
+                  value.var = "value")
+}
 
 # Change column name to be the same as in other objects
-setnames(fred_dt, "month", "date")
+setnames(fred_dt, FREQ, "date")
 
 # Fill by nalocf
 setnafill(fred_dt, "locf")
@@ -148,9 +178,14 @@ dt[is.na(excess_return_1 & maturity_months < 120)]
 
 # momentum predictors
 setorder(dt, maturity, date)
-mom_width = 1:12
+if (FREQ == "biweek") {
+  mom_width = 1:26
+} else if (FREQ == "month") {
+  mom_width = c(1:12)
+}
 mom_cols = paste0("m_", mom_width)
-dt[, (mom_cols) := lapply(mom_width, function(x) price / shift(price, x) - 1), by = maturity]
+dt[, (mom_cols) := lapply(mom_width, function(x) price / shift(price, x) - 1),
+   by = maturity]
 
 # yield curve factors
 yields_multiatsm = dt[, .(date, maturity, yield)]
@@ -174,8 +209,9 @@ spa_fact[, date := as.IDate(date)]
 dt = merge(dt, spa_fact, by = "date", all.x = TRUE)
 
 # Checks
+dt[, min(date)]
 dt[, max(date)]
-dt[is.na(excess_return_1 & maturity_months < 120)]
+dt[is.na(excess_return_1) & maturity_months < 120]
 
 # save to Azure
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
@@ -183,6 +219,6 @@ blob_key = "0M4WRlV0/1b6b3ZpFKJvevg4xbC/gaNBcdtVZW+zOZcRi0ZLfOm1v/j2FZ4v+o8lycJL
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
 time_ = strftime(Sys.time(), format = "%Y%m%d")
-file_name = paste0("bonds-predictors-", time_, ".csv")
+file_name = glue("bonds-predictors-{FREQ}-{time_}.csv")
 print(file_name)
 storage_write_csv(dt, cont, file_name)
