@@ -3,7 +3,7 @@
 #PBS -N ZSEML
 #PBS -l ncpus=4
 #PBS -l mem=6GB
-#PBS -J 1-10000
+#PBS -J 10001-13464
 #PBS -o experiments/logs
 #PBS -j oe
 
