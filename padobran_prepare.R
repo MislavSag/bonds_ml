@@ -35,12 +35,16 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-dt = storage_read_csv(cont, "bonds-predictors-month-20240418.csv")
+dt = storage_read_csv(cont, "bonds-predictors-month-20240429.csv")
 setDT(dt)
+
+# If LIVE change and keep last date
+dt[date == max(date), excess_return_1 := 0]
 
 # Checks
 dt[, min(date)]
 dt[, max(date)]
+dt[date == max(date)]
 dim(dt[!is.na(excess_return_1) & maturity_months < 12])
 dim(dt[!is.na(excess_return_1) & maturity_months < 120])
 dim(dt[!is.na(excess_return_1) & maturity_months < 240])
@@ -98,14 +102,14 @@ monnb = function(d) {
   lt$year*12 + lt$mon }
 mondf = function(d1, d2) monnb(d2) - monnb(d1)
 nested_cv_expanding = function(task,
-                               train_length_start = 240,
-                               tune_length = 3,
+                               train_length_start = 221,
+                               tune_length = 6,
                                test_length = 1,
                                gap_tune = 0,
                                gap_test = 0) {
 
   # get year month id data
-  # task = tasks[[1]]$clone()
+  # task = tasks[[3]]$clone()
   task_ = task$clone()
   date_ = task_$backend$data(cols = c("date", "..row_id"),
                              rows = 1:task_$nrow)
@@ -179,13 +183,16 @@ nested_cv_expanding = function(task,
 
 # create list of cvs
 cvs = lapply(tasks, function(tsk_) {
+  # tsk_ = tasks[[3]]
   print(tsk_$id)
-  # tsk_ = tasks[[1]]
   horizont_ = as.integer(gsub("excess_return_", "", tsk_$target_names))
   maturity_ = as.integer(gsub("m|_.*", "", tsk_$id))
-  min_date = tsk_$backend$data(rows = tsk_$row_ids, cols = "date")
-  min_date = min_date[, min(as.Date(date), na.rm = TRUE)]
+  dates_ = tsk_$backend$data(rows = tsk_$row_ids, cols = "date")
+  min_date = dates_[, min(as.Date(date), na.rm = TRUE)]
+  print(min_date)
+  print(dates_[, max(as.Date(date), na.rm = TRUE)])
   train_length = mondf(min_date, as.Date("2001-01-01")) - maturity_
+  print(train_length)
   nested_cv_expanding(
     task = tsk_,
     train_length_start = train_length,
@@ -195,6 +202,10 @@ cvs = lapply(tasks, function(tsk_) {
     gap_test = 0 #  horizont_  # TODO: think if here is -1. Without -1 is conservative
   )
 })
+
+lapply(1:11, function(i) cvs[[i]]$custom_outer$test_set(cvs[[i]]$custom_outer$iters))
+
+
 
 # visualize CV's
 if (interactive()) {
@@ -534,7 +545,7 @@ print("Batchmark")
 batchmark(designs, reg = reg)
 
 # create sh file
-if (interactive() && LIVE) {
+if (LIVE) {
   # load registry
   # reg = loadRegistry("experiments_live", writeable = TRUE)
   # test 1 job
@@ -546,7 +557,7 @@ if (interactive() && LIVE) {
   ids = findNotDone(reg = reg)
 
   # set up cluster (for local it is parallel)
-  cf = makeClusterFunctionsSocket(ncpus = 8L)
+  cf = makeClusterFunctionsSocket(ncpus = 4L)
   reg$cluster.functions = cf
   saveRegistry(reg = reg)
 
@@ -585,11 +596,36 @@ if (LIVE) {
   results_live_dt = as.data.table(results_live)
   head(results_live_dt)
 
-  # results_dt = cbind.data.frame(
-  #   row_id   = result$prediction$test$row_ids,
-  #   truth    = result$prediction$test$truth,
-  #   response = result$prediction$test$response
-  # )
-  # setDT(results_dt)
+  # Get predictions
+  predictions = lapply(results_live_dt$prediction, as.data.table)
+  predictions = rbindlist(predictions)
 
+  # Merge tak id to get maturity
+  ids_ = vapply(results_live_dt$task,
+                function(tsk_) tsk_$id,
+                FUN.VALUE = character(1))
+  predictions = cbind(predictions, ids_)
+
+  # It is ok for 4 folds to have lower row_ids values.
+  # This is because one task in a list of tasks have lower number of observations
+  # (this is task with 120 maturity or 10 years maturity). It starts from 1971
+  # while other starts from 1961.
+
+  # The question is which model or combination of models to use for final prediction.
+  # From results in backtest it seems the two best options are:
+  # 1. mean acroos all predictions (all maturities and models)
+  # 2. mean of predictions for all models but only for maturity 60
+
+  # Get ansamble predictio (mean) that was best on backtest
+  predictions[, mean(response)] # 1)
+  predictions[ids_ == "m60_1"][, mean(response)] # 2)
+  best_prediction = predictions[, mean(response)]
+
+  # Save best prediction to Azure csv
+  cont = storage_container(BLOBENDPOINT, "qc-backtest")
+  storage_write_csv(
+    object = data.frame(prediction_tlt = best_prediction),
+    container = cont,
+    file = "tlt_macro_prediction.csv"
+    )
 }

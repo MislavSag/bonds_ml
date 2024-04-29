@@ -18,7 +18,7 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 
 # globals
-PATH = "F:/padobran/bondsml_5" # "F:/padobran/bonds_ml/"
+PATH = "F:/padobran/bondsml_6" # "F:/padobran/bonds_ml/"
 # PATH = "C:/Users/Mislav/Documents/GitHub/bonds_ml/experiments_live"
 
 # load registry
@@ -100,38 +100,69 @@ predictions[, date := as.Date(date)]
 
 
 # TLT DATA ----------------------------------------------------------------
+# # get securities data from QC
+# get_sec = function(symbol) {
+#   con <- dbConnect(duckdb::duckdb())
+#   query <- sprintf("
+#     SELECT *
+#     FROM 'F:/lean/data/stocks_daily.csv'
+#     WHERE Symbol = '%s'
+# ", symbol)
+#   data_ <- dbGetQuery(con, query)
+#   dbDisconnect(con)
+#   data_ = as.data.table(data_)
+#   data_ = data_[, .(date = Date, close = `Adj Close`)]
+#   data_[, returns := close / shift(close) - 1]
+#   data_ = na.omit(data_)
+#   return(data_)
+# }
+# tlt_dt = get_sec("tlt")
+#
+# # Downsample TLT to monthly
+# tlt_m = copy(tlt_dt)
+# tlt_m[, month := ceiling_date(date, "month")]
+# # tlt_m[, close := tail(close, 1), by = month]
+# tlt_m = tlt_m[, tail(.SD, 1), by = month]
+# tlt_m[, returns := close / shift(close) - 1]
+# tlt_m = na.omit(tlt_m)
+# tlt_m = rbindlist(list(
+#   tlt_m,
+#   data.table(month = as.Date("2024-03-01"),
+#              date  = as.Date("2024-03-02"),
+#              close = 100,
+#              returns = 0.01)
+# ))
+
+########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
 # get securities data from QC
-get_sec = function(symbol) {
-  con <- dbConnect(duckdb::duckdb())
-  query <- sprintf("
-    SELECT *
-    FROM 'F:/lean/data/stocks_daily.csv'
-    WHERE Symbol = '%s'
-", symbol)
-  data_ <- dbGetQuery(con, query)
-  dbDisconnect(con)
-  data_ = as.data.table(data_)
-  data_ = data_[, .(date = Date, close = `Adj Close`)]
-  data_[, returns := close / shift(close) - 1]
-  data_ = na.omit(data_)
-  return(data_)
-}
-tlt_dt = get_sec("tlt")
+con <- dbConnect(duckdb::duckdb())
+query <- sprintf("
+  SELECT *
+  FROM 'F:/data/equity/daily_fmp_all.csv'
+  WHERE Symbol = '%s'
+", "TLT")
+data_ <- dbGetQuery(con, query)
+dbDisconnect(con)
+data_ = as.data.table(data_)
+data_ = data_[, .(date, close = `adjClose`)]
+data_[, returns := close / shift(close) - 1]
+tlt_dt = na.omit(data_)
 
 # Downsample TLT to monthly
 tlt_m = copy(tlt_dt)
 tlt_m[, month := ceiling_date(date, "month")]
-# tlt_m[, close := tail(close, 1), by = month]
 tlt_m = tlt_m[, tail(.SD, 1), by = month]
 tlt_m[, returns := close / shift(close) - 1]
 tlt_m = na.omit(tlt_m)
-tlt_m = rbindlist(list(
-  tlt_m,
-  data.table(month = as.Date("2024-03-01"),
-             date  = as.Date("2024-03-02"),
-             close = 100,
-             returns = 0.01)
-))
+# tlt_m = rbindlist(list(
+#   tlt_m,
+#   data.table(month = as.Date("2024-03-01"),
+#              date  = as.Date("2024-03-02"),
+#              close = 100,
+#              returns = 0.01)
+# ))
+
+########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
 
 
 # BACKTEST ----------------------------------------------------------------
@@ -251,7 +282,7 @@ charts.PerformanceSummary(as.xts.data.table(best[, 1:7]), legend())
 # ensamble for one month
 predictions_ensamble = backtest_dt[, .(month, learner, response)]
 # predictions_ensamble = backtest_dt[gsub(".*_", "", task) == 1, .(month, learner, response)]
-predictions_ensamble = predictions_ensamble[, .(response = median(response, na.rm = TRUE)), by = month]
+predictions_ensamble = predictions_ensamble[, .(response = mean(response, na.rm = TRUE)), by = month]
 predictions_ensamble[, signal_strat := response >= 0]
 tlt_back = merge(tlt_m, predictions_ensamble, by = "month", all.x = TRUE, all.y = FALSE)
 tlt_back = tlt_back[, `:=`(strategy = returns * shift(signal_strat))]
