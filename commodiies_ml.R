@@ -4,6 +4,8 @@ library(httr)
 library(mlr3verse)
 library(paradox)
 library(AzureStor)
+library(mlr3batchmark)
+library(batchtools)
 
 
 # PARAMETERS --------------------------------------------------------------
