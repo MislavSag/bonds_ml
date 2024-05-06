@@ -21,7 +21,7 @@ if (interactive()) {
   key = readLines('./blob_key.txt')
   BLOBENDPOINT = storage_endpoint(endpoint, key=key)
   cont = storage_container(BLOBENDPOINT, "qc-backtest")
-  storage_read_csv(dt, cont, "commodities_dt.csv")
+  dt = storage_read_csv(cont, "commodities_dt.csv")
 }
 
 
