@@ -100,69 +100,75 @@ predictions[, date := as.Date(date)]
 
 
 # TLT DATA ----------------------------------------------------------------
-# # get securities data from QC
-# get_sec = function(symbol) {
-#   con <- dbConnect(duckdb::duckdb())
-#   query <- sprintf("
-#     SELECT *
-#     FROM 'F:/lean/data/stocks_daily.csv'
-#     WHERE Symbol = '%s'
-# ", symbol)
-#   data_ <- dbGetQuery(con, query)
-#   dbDisconnect(con)
-#   data_ = as.data.table(data_)
-#   data_ = data_[, .(date = Date, close = `Adj Close`)]
-#   data_[, returns := close / shift(close) - 1]
-#   data_ = na.omit(data_)
-#   return(data_)
-# }
-# tlt_dt = get_sec("tlt")
-#
-# # Downsample TLT to monthly
-# tlt_m = copy(tlt_dt)
-# tlt_m[, month := ceiling_date(date, "month")]
-# # tlt_m[, close := tail(close, 1), by = month]
-# tlt_m = tlt_m[, tail(.SD, 1), by = month]
-# tlt_m[, returns := close / shift(close) - 1]
-# tlt_m = na.omit(tlt_m)
-# tlt_m = rbindlist(list(
-#   tlt_m,
-#   data.table(month = as.Date("2024-03-01"),
-#              date  = as.Date("2024-03-02"),
-#              close = 100,
-#              returns = 0.01)
-# ))
-
-########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
 # get securities data from QC
-con <- dbConnect(duckdb::duckdb())
-query <- sprintf("
-  SELECT *
-  FROM 'F:/data/equity/daily_fmp_all.csv'
-  WHERE Symbol = '%s'
-", "TLT")
-data_ <- dbGetQuery(con, query)
-dbDisconnect(con)
-data_ = as.data.table(data_)
-data_ = data_[, .(date, close = `adjClose`)]
-data_[, returns := close / shift(close) - 1]
-tlt_dt = na.omit(data_)
+get_sec = function(symbol) {
+  con <- dbConnect(duckdb::duckdb())
+  query <- sprintf("
+    SELECT *
+    FROM 'F:/lean/data/stocks_daily.csv'
+    WHERE Symbol = '%s'
+", symbol)
+  data_ <- dbGetQuery(con, query)
+  dbDisconnect(con)
+  data_ = as.data.table(data_)
+  data_ = data_[, .(date = Date, close = `Adj Close`)]
+  data_[, returns := close / shift(close) - 1]
+  data_ = na.omit(data_)
+  return(data_)
+}
+tlt_dt = get_sec("tlt")
 
 # Downsample TLT to monthly
 tlt_m = copy(tlt_dt)
 tlt_m[, month := ceiling_date(date, "month")]
+# tlt_m[, close := tail(close, 1), by = month]
 tlt_m = tlt_m[, tail(.SD, 1), by = month]
 tlt_m[, returns := close / shift(close) - 1]
 tlt_m = na.omit(tlt_m)
-# tlt_m = rbindlist(list(
-#   tlt_m,
-#   data.table(month = as.Date("2024-03-01"),
-#              date  = as.Date("2024-03-02"),
-#              close = 100,
-#              returns = 0.01)
-# ))
 
-########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
+# Add last date if not already in tlt_m
+add_ = predictions[, data.table::yearmon(max(date))] >
+  tlt_m[, data.table::yearmon(max(month))]
+if (add_) {
+  tlt_m = rbindlist(list(
+    tlt_m,
+    data.table(month = predictions[, max(date)],
+               date  = predictions[, max(date)],
+               close = 100,
+               returns = 0.01)
+  ))
+}
+
+# ########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
+# # get securities data from QC
+# con <- dbConnect(duckdb::duckdb())
+# query <- sprintf("
+#   SELECT *
+#   FROM 'F:/data/equity/daily_fmp_all.csv'
+#   WHERE Symbol = '%s'
+# ", "TLT")
+# data_ <- dbGetQuery(con, query)
+# dbDisconnect(con)
+# data_ = as.data.table(data_)
+# data_ = data_[, .(date, close = `adjClose`)]
+# data_[, returns := close / shift(close) - 1]
+# tlt_dt = na.omit(data_)
+#
+# # Downsample TLT to monthly
+# tlt_m = copy(tlt_dt)
+# tlt_m[, month := ceiling_date(date, "month")]
+# tlt_m = tlt_m[, tail(.SD, 1), by = month]
+# tlt_m[, returns := close / shift(close) - 1]
+# tlt_m = na.omit(tlt_m)
+# # tlt_m = rbindlist(list(
+# #   tlt_m,
+# #   data.table(month = as.Date("2024-03-01"),
+# #              date  = as.Date("2024-03-02"),
+# #              close = 100,
+# #              returns = 0.01)
+# # ))
+#
+# ########### TEMPORARLY SINCEI DONT HAVE QC DATA RIGHT NOW ########
 
 
 # BACKTEST ----------------------------------------------------------------

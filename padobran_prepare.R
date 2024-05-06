@@ -7,7 +7,7 @@ library(AzureStor)
 library(mlr3batchmark)
 library(batchtools)
 library(finautoml)
-
+library(glue)
 
 
 # COMMAND LINE ARGUMENTS --------------------------------------------------
@@ -35,7 +35,8 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-dt = storage_read_csv(cont, "bonds-predictors-month-20240429.csv")
+AzureStor::list_blobs(cont)
+dt = storage_read_csv(cont, "bonds-predictors-month-20240505.csv")
 setDT(dt)
 
 # If LIVE change and keep last date
@@ -266,152 +267,152 @@ mlr_measures$add("adjloss2", AdjLoss2)
 mlr_measures$add("portfolio_ret", PortfolioRet)
 
 
-# LEARNERS ----------------------------------------------------------------
-# graph template
-gr = gunion(list(
-  po("nop", id = "nop_union_pca"),
-  po("pca", center = FALSE, rank. = 10),
-  po("ica", n.comp = 10)
-)) %>>% po("featureunion")
-filters_ = list(
-  po("filter", flt("disr"), filter.nfeat = 3),
-  po("filter", flt("jmim"), filter.nfeat = 3),
-  po("filter", flt("jmi"), filter.nfeat = 3),
-  po("filter", flt("mim"), filter.nfeat = 3),
-  po("filter", flt("mrmr"), filter.nfeat = 3),
-  po("filter", flt("njmim"), filter.nfeat = 3),
-  po("filter", flt("cmim"), filter.nfeat = 3),
-  po("filter", flt("carscore"), filter.nfeat = 3),
-  po("filter", flt("information_gain"), filter.nfeat = 3),
-  po("filter", filter = flt("relief"), filter.nfeat = 3),
-  po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
-)
-graph_filters = gunion(filters_) %>>%
-  po("featureunion", length(filters_), id = "feature_union_filters")
-graph_template =
-  po("removeconstants", id = "removeconstants_1", ratio = 0)  %>>%
-  po("fixfactors", id = "fixfactors") %>>%
-  po("dropcorr", id = "dropcorr", cutoff = 0.99) %>>%
-  # scale branch
-  po("branch", options = c("uniformization", "scale"), id = "scale_branch") %>>%
-  gunion(list(po("uniformization"),
-              po("scale")
-  )) %>>%
-  po("unbranch", id = "scale_unbranch") %>>%
-  gr %>>%
-  graph_filters %>>%
-  # modelmatrix
-  po("branch", options = c("nop_interaction", "modelmatrix"), id = "interaction_branch") %>>%
-  gunion(list(
-    po("nop", id = "nop_interaction"),
-    po("modelmatrix", formula = ~ . ^ 2))) %>>%
-  po("unbranch", id = "interaction_unbranch") %>>%
-  po("removeconstants", id = "removeconstants_3", ratio = 0)
+  # LEARNERS ----------------------------------------------------------------
+  # graph template
+  gr = gunion(list(
+    po("nop", id = "nop_union_pca"),
+    po("pca", center = FALSE, rank. = 10),
+    po("ica", n.comp = 10)
+  )) %>>% po("featureunion")
+  filters_ = list(
+    po("filter", flt("disr"), filter.nfeat = 3),
+    po("filter", flt("jmim"), filter.nfeat = 3),
+    po("filter", flt("jmi"), filter.nfeat = 3),
+    po("filter", flt("mim"), filter.nfeat = 3),
+    po("filter", flt("mrmr"), filter.nfeat = 3),
+    po("filter", flt("njmim"), filter.nfeat = 3),
+    po("filter", flt("cmim"), filter.nfeat = 3),
+    po("filter", flt("carscore"), filter.nfeat = 3),
+    po("filter", flt("information_gain"), filter.nfeat = 3),
+    po("filter", filter = flt("relief"), filter.nfeat = 3),
+    po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
+  )
+  graph_filters = gunion(filters_) %>>%
+    po("featureunion", length(filters_), id = "feature_union_filters")
+  graph_template =
+    po("removeconstants", id = "removeconstants_1", ratio = 0)  %>>%
+    po("fixfactors", id = "fixfactors") %>>%
+    po("dropcorr", id = "dropcorr", cutoff = 0.99) %>>%
+    # scale branch
+    po("branch", options = c("uniformization", "scale"), id = "scale_branch") %>>%
+    gunion(list(po("uniformization"),
+                po("scale")
+    )) %>>%
+    po("unbranch", id = "scale_unbranch") %>>%
+    gr %>>%
+    graph_filters %>>%
+    # modelmatrix
+    po("branch", options = c("nop_interaction", "modelmatrix"), id = "interaction_branch") %>>%
+    gunion(list(
+      po("nop", id = "nop_interaction"),
+      po("modelmatrix", formula = ~ . ^ 2))) %>>%
+    po("unbranch", id = "interaction_unbranch") %>>%
+    po("removeconstants", id = "removeconstants_3", ratio = 0)
 
-# hyperparameters template
-as.data.table(graph_template$param_set)[101:120]
-search_space_template = ps(
-  dropcorr.cutoff = p_fct(
-    levels = c("0.80", "0.90", "0.95", "0.99"),
-    trafo = function(x, param_set) {
-      switch(x,
-             "0.80" = 0.80,
-             "0.90" = 0.90,
-             "0.95" = 0.95,
-             "0.99" = 0.99)
-    }
-  ),
-  # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
-)
+  # hyperparameters template
+  as.data.table(graph_template$param_set)[101:120]
+  search_space_template = ps(
+    dropcorr.cutoff = p_fct(
+      levels = c("0.80", "0.90", "0.95", "0.99"),
+      trafo = function(x, param_set) {
+        switch(x,
+               "0.80" = 0.80,
+               "0.90" = 0.90,
+               "0.95" = 0.95,
+               "0.99" = 0.99)
+      }
+    ),
+    # scaling
+    scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+    # interaction
+    interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
+  )
 
-# random forest graph
-graph_rf = graph_template %>>%
-  po("learner", learner = lrn("regr.ranger"))
-plot(graph_rf)
-graph_rf = as_learner(graph_rf)
-as.data.table(graph_rf$param_set)[, .(id, class, lower, upper, levels)]
-search_space_rf = search_space_template$clone()
-search_space_rf$add(
-  ps(regr.ranger.max.depth  = p_int(1, 15),
-     regr.ranger.replace    = p_lgl(),
-     regr.ranger.mtry.ratio = p_dbl(0.1, 1),
-     regr.ranger.num.trees  = p_int(10, 2000),
-     regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees")))
-)
+  # random forest graph
+  graph_rf = graph_template %>>%
+    po("learner", learner = lrn("regr.ranger"))
+  plot(graph_rf)
+  graph_rf = as_learner(graph_rf)
+  as.data.table(graph_rf$param_set)[, .(id, class, lower, upper, levels)]
+  search_space_rf = search_space_template$clone()
+  search_space_rf$add(
+    ps(regr.ranger.max.depth  = p_int(1, 15),
+       regr.ranger.replace    = p_lgl(),
+       regr.ranger.mtry.ratio = p_dbl(0.1, 1),
+       regr.ranger.num.trees  = p_int(10, 2000),
+       regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees")))
+  )
 
-# xgboost graph
-graph_xgboost = graph_template %>>%
-  po("learner", learner = lrn("regr.xgboost"))
-plot(graph_xgboost)
-graph_xgboost = as_learner(graph_xgboost)
-as.data.table(graph_xgboost$param_set)[grep("depth", id), .(id, class, lower, upper, levels)]
-search_space_xgboost = ps(
-  dropcorr.cutoff = p_fct(
-    levels = c("0.80", "0.90", "0.95", "0.99"),
-    trafo = function(x, param_set) {
-      switch(x,
-             "0.80" = 0.80,
-             "0.90" = 0.90,
-             "0.95" = 0.95,
-             "0.99" = 0.99)
-    }
-  ),
-  # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # learner
-  regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
-  regr.xgboost.max_depth = p_int(1, 20),
-  regr.xgboost.eta       = p_dbl(0.0001, 1, logscale = TRUE),
-  regr.xgboost.nrounds   = p_int(1, 5000),
-  regr.xgboost.subsample = p_dbl(0.1, 1)
-)
+  # xgboost graph
+  graph_xgboost = graph_template %>>%
+    po("learner", learner = lrn("regr.xgboost"))
+  plot(graph_xgboost)
+  graph_xgboost = as_learner(graph_xgboost)
+  as.data.table(graph_xgboost$param_set)[grep("depth", id), .(id, class, lower, upper, levels)]
+  search_space_xgboost = ps(
+    dropcorr.cutoff = p_fct(
+      levels = c("0.80", "0.90", "0.95", "0.99"),
+      trafo = function(x, param_set) {
+        switch(x,
+               "0.80" = 0.80,
+               "0.90" = 0.90,
+               "0.95" = 0.95,
+               "0.99" = 0.99)
+      }
+    ),
+    # scaling
+    scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+    # learner
+    regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
+    regr.xgboost.max_depth = p_int(1, 20),
+    regr.xgboost.eta       = p_dbl(0.0001, 1, logscale = TRUE),
+    regr.xgboost.nrounds   = p_int(1, 5000),
+    regr.xgboost.subsample = p_dbl(0.1, 1)
+  )
 
-# glmnet graph
-graph_glmnet = graph_template %>>%
-  po("learner", learner = lrn("regr.glmnet"))
-graph_glmnet = as_learner(graph_glmnet)
-as.data.table(graph_glmnet$param_set)[, .(id, class, lower, upper, levels)]
-search_space_glmnet = ps(
-  dropcorr.cutoff = p_fct(
-    levels = c("0.80", "0.90", "0.95", "0.99"),
-    trafo = function(x, param_set) {
-      switch(x,
-             "0.80" = 0.80,
-             "0.90" = 0.90,
-             "0.95" = 0.95,
-             "0.99" = 0.99)
-    }
-  ),
-  # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
-  # learner
-  regr.glmnet.s     = p_int(lower = 5, upper = 30),
-  regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
-)
+  # glmnet graph
+  graph_glmnet = graph_template %>>%
+    po("learner", learner = lrn("regr.glmnet"))
+  graph_glmnet = as_learner(graph_glmnet)
+  as.data.table(graph_glmnet$param_set)[, .(id, class, lower, upper, levels)]
+  search_space_glmnet = ps(
+    dropcorr.cutoff = p_fct(
+      levels = c("0.80", "0.90", "0.95", "0.99"),
+      trafo = function(x, param_set) {
+        switch(x,
+               "0.80" = 0.80,
+               "0.90" = 0.90,
+               "0.95" = 0.95,
+               "0.99" = 0.99)
+      }
+    ),
+    # scaling
+    scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+    # interaction
+    interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
+    # learner
+    regr.glmnet.s     = p_int(lower = 5, upper = 30),
+    regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
+  )
 
-# nnet graph
-graph_nnet = graph_template %>>%
-  po("learner", learner = lrn("regr.nnet", MaxNWts = 50000))
-graph_nnet = as_learner(graph_nnet)
-as.data.table(graph_nnet$param_set)[, .(id, class, lower, upper, levels)]
-search_space_nnet = search_space_template$clone()
-search_space_nnet$add(
-  ps(regr.nnet.size  = p_int(lower = 2, upper = 15),
-     regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
-     regr.nnet.maxit = p_int(lower = 50, upper = 500))
-)
+  # nnet graph
+  graph_nnet = graph_template %>>%
+    po("learner", learner = lrn("regr.nnet", MaxNWts = 50000))
+  graph_nnet = as_learner(graph_nnet)
+  as.data.table(graph_nnet$param_set)[, .(id, class, lower, upper, levels)]
+  search_space_nnet = search_space_template$clone()
+  search_space_nnet$add(
+    ps(regr.nnet.size  = p_int(lower = 2, upper = 15),
+       regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
+       regr.nnet.maxit = p_int(lower = 50, upper = 500))
+  )
 
-# Threads
-threads = 2
-set_threads(graph_rf, n = threads)
-set_threads(graph_xgboost, n = threads)
-set_threads(graph_nnet, n = threads)
-set_threads(graph_glmnet, n = threads)
+  # Threads
+  threads = 2
+  set_threads(graph_rf, n = threads)
+  set_threads(graph_xgboost, n = threads)
+  set_threads(graph_nnet, n = threads)
+  set_threads(graph_glmnet, n = threads)
 
 
 # BATCHMARK ---------------------------------------------------------------
@@ -592,6 +593,10 @@ apptainer run image.sif run_job.R 0
 
 # Inspect individual result
 if (LIVE) {
+  # load registry
+  reg = loadRegistry("experiments_live", writeable = TRUE)
+
+  # import results
   results_live = reduceResultsBatchmark(reg = reg)
   results_live_dt = as.data.table(results_live)
   head(results_live_dt)
@@ -622,10 +627,12 @@ if (LIVE) {
   best_prediction = predictions[, mean(response)]
 
   # Save best prediction to Azure csv
-  cont = storage_container(BLOBENDPOINT, "qc-backtest")
+  cont = storage_container(BLOBENDPOINT, "qc-live")
+  time_ = strftime(Sys.time(), format = "%Y%m%d%H%M%S")
+  file_name = glue("tlt_macro_prediction_{time_}.csv")
   storage_write_csv(
     object = data.frame(prediction_tlt = best_prediction),
     container = cont,
-    file = "tlt_macro_prediction.csv"
+    file = file_name
     )
 }

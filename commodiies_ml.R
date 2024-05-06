@@ -3,10 +3,13 @@ library(gausscov)
 library(httr)
 library(mlr3verse)
 library(paradox)
-# library(AzureStor)
-# library(mlr3batchmark)
-# library(batchtools)
 
+
+
+# PARAMETERS --------------------------------------------------------------
+# choose commodities
+COMMODITIES = "gold" # if NULL, all commodities are used
+LIVE        = FALSE
 
 
 # IMPORT DATA -------------------------------------------------------------
@@ -17,14 +20,14 @@ dt = fread("data/commodities_dt.csv")
 # TASKS --------------------------------------------------------
 # task parameters
 cols = colnames(dt)
+vars = ifelse(is.null(COMMODITIES), dt[, unique(var)], COMMODITIES)
 task_params = expand.grid(gsub("excess_return_", "", cols[grep("target", cols)]),
-                          dt[, unique(var)],
-                          stringsAsFactors = FALSE)
+                          vars, stringsAsFactors = FALSE)
 colnames(task_params) = c("targets", "commodity")
 
 # define predictors
 cols = colnames(dt)
-predictors = cols[(which(cols == "target_ret_12") + 1):length(cols)]
+predictors = cols[(which(cols == "target_ret_1") + 1):length(cols)]
 
 # help function to prepare data for specific maturity and horizont
 id_cols = c("month", "var")
@@ -36,6 +39,7 @@ tasks = lapply(1:nrow(task_params), function(i) {
   dt_ = dt[, ..cols_]
   dt_ = dt_[var == var_]
   dt_ = na.omit(dt_)
+  dt_ = dt_[80:nrow(dt_)] # mannual inspection; prices doesnt change before
   dt_[, month := as.POSIXct(month, tz = "UTC")]
   tsk_ = as_task_regr(dt_,
                       id = paste(var_, sep = "_"),
@@ -144,45 +148,34 @@ cvs = lapply(tasks, function(tsk_) {
   horizont_ = as.integer(gsub("target_ret_", "", tsk_$target_names))
   nested_cv_expanding(
     task = tsk_,
-    train_length_start = 120,
-    tune_length = 3,
+    train_length_start = 360,
+    tune_length = 6,
     test_length = 1,
-    gap_tune = horizont_ - 1,
-    # TODO: think if here is -1.
-    gap_test = horizont_ - 1  # TODO: think if here is -1.
+    gap_tune = horizont_, # TODO: think if here is -1.
+    gap_test = horizont_  # TODO: think if here is -1.
   )
 })
 
 
 # ADD PIPELINES -----------------------------------------------------------
-# source pipes, filters and other
-# source("mlr3_winsorization.R")
-source("mlr3_uniformization.R")
-source("mlr3_gausscov_f1st.R")
-source("mlr3_gausscov_f3st.R")
-# source("mlr3_dropna.R")
-# source("mlr3_dropnacol.R")
-source("mlr3_filter_drop_corr.R")
-# source("mlr3_winsorizationsimple.R")
-# source("mlr3_winsorizationsimplegroup.R")
-# source("PipeOpPCAExplained.R")
+print("Add pipelines")
+
 # measures
-source("Linex.R")
 source("AdjLoss2.R")
 source("PortfolioRet.R")
 
 # add my pipes to mlr dictionary
-mlr_pipeops$add("uniformization", PipeOpUniform)
+mlr_pipeops$add("uniformization", finautoml::PipeOpUniform)
 # mlr_pipeops$add("winsorize", PipeOpWinsorize)
-# mlr_pipeops$add("winsorizesimple", PipeOpWinsorizeSimple)
+mlr_pipeops$add("winsorizesimple", finautoml::PipeOpWinsorizeSimple)
 # mlr_pipeops$add("winsorizesimplegroup", PipeOpWinsorizeSimpleGroup)
-# mlr_pipeops$add("dropna", PipeOpDropNA)
-# mlr_pipeops$add("dropnacol", PipeOpDropNACol)
-mlr_pipeops$add("dropcorr", PipeOpDropCorr)
+mlr_pipeops$add("dropna", finautoml::PipeOpDropNA)
+mlr_pipeops$add("dropnacol", finautoml::PipeOpDropNACol)
+mlr_pipeops$add("dropcorr", finautoml::PipeOpDropCorr)
 # mlr_pipeops$add("pca_explained", PipeOpPCAExplained)
-mlr_filters$add("gausscov_f1st", FilterGausscovF1st)
-mlr_filters$add("gausscov_f3st", FilterGausscovF3st)
-mlr_measures$add("linex", Linex)
+mlr_pipeops$add("filter_target", finautoml::PipeOpFilterRegrTarget)
+mlr_filters$add("gausscov_f1st", finautoml::FilterGausscovF1st)
+mlr_measures$add("linex", finautoml::Linex)
 mlr_measures$add("adjloss2", AdjLoss2)
 mlr_measures$add("portfolio_ret", PortfolioRet)
 
@@ -194,94 +187,56 @@ gr = gunion(list(
   po("pca", center = FALSE, rank. = 10),
   po("ica", n.comp = 10)
 )) %>>% po("featureunion")
+filters_ = list(
+  po("filter", flt("disr"), filter.nfeat = 3),
+  po("filter", flt("jmim"), filter.nfeat = 3),
+  po("filter", flt("jmi"), filter.nfeat = 3),
+  po("filter", flt("mim"), filter.nfeat = 3),
+  po("filter", flt("mrmr"), filter.nfeat = 3),
+  po("filter", flt("njmim"), filter.nfeat = 3),
+  po("filter", flt("cmim"), filter.nfeat = 3),
+  po("filter", flt("carscore"), filter.nfeat = 3),
+  po("filter", flt("information_gain"), filter.nfeat = 3),
+  po("filter", filter = flt("relief"), filter.nfeat = 3),
+  po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
+)
+graph_filters = gunion(filters_) %>>%
+  po("featureunion", length(filters_), id = "feature_union_filters")
 graph_template =
-  # po("subsample") %>>% # uncomment this for hyperparameter tuning
-  # po("dropnacol", id = "dropnacol", cutoff = 0.05) %>>%
-  # po("dropna", id = "dropna") %>>%
   po("removeconstants", id = "removeconstants_1", ratio = 0)  %>>%
   po("fixfactors", id = "fixfactors") %>>%
-  # po("winsorizesimple", id = "winsorizesimple", probs_low = 0.01, probs_high = 0.99, na.rm = TRUE) %>>%
-  # po("winsorizesimplegroup", group_var = "weekid", id = "winsorizesimplegroup", probs_low = 0.01, probs_high = 0.99, na.rm = TRUE) %>>%
-  # po("removeconstants", id = "removeconstants_2", ratio = 0)  %>>%
   po("dropcorr", id = "dropcorr", cutoff = 0.99) %>>%
   # scale branch
-  po("branch",
-     options = c("uniformization", "scale"),
-     id = "scale_branch") %>>%
+  po("branch", options = c("uniformization", "scale"), id = "scale_branch") %>>%
   gunion(list(po("uniformization"),
-              po("scale"))) %>>%
-  po("unbranch", id = "scale_unbranch") %>>%
-  # po("dropna", id = "dropna_v2") %>>%
-  # add pca columns
-  gr %>>%
-  # filters
-  po("branch",
-     options = c("jmi", "relief", "gausscovf3"),
-     id = "filter_branch") %>>%
-  gunion(list(
-    po("filter", filter = flt("jmi"), filter.nfeat = 10),
-    po(
-      "filter",
-      filter = flt("relief"),
-      filter.nfeat = 10
-    ),
-    po(
-      "filter",
-      filter = flt("gausscov_f3st"),
-      m = 1,
-      p0 = 0.01,
-      filter.cutoff = 0
-    )
-    # po("filter", filter = flt("gausscov_f1st"), filter.cutoff = 0)
+              po("scale")
   )) %>>%
-  po("unbranch", id = "filter_unbranch") %>>%
+  po("unbranch", id = "scale_unbranch") %>>%
+  gr %>>%
+  graph_filters %>>%
   # modelmatrix
-  po("branch",
-     options = c("nop_interaction", "modelmatrix"),
-     id = "interaction_branch") %>>%
+  po("branch", options = c("nop_interaction", "modelmatrix"), id = "interaction_branch") %>>%
   gunion(list(
     po("nop", id = "nop_interaction"),
-    po("modelmatrix", formula = ~ . ^ 2)
-  )) %>>%
+    po("modelmatrix", formula = ~ . ^ 2))) %>>%
   po("unbranch", id = "interaction_unbranch") %>>%
   po("removeconstants", id = "removeconstants_3", ratio = 0)
 
 # hyperparameters template
-graph_template$param_set
+as.data.table(graph_template$param_set)[101:120]
 search_space_template = ps(
-  # subsample for hyperband
-  # subsample.frac = p_dbl(0.3, 1, tags = "budget"), # unccoment this if we want to use hyperband optimization
-  # preprocessing
-  # dropnacol.affect_columns = p_fct(
-  #   levels = c("0.01", "0.05", "0.10"),
-  #   trafo = function(x, param_set) {
-  #     switch(x,
-  #            "0.01" = 0.01,
-  #            "0.05" = 0.05,
-  #            "0.10" = 0.1)
-  #   }
-  # ),
   dropcorr.cutoff = p_fct(
     levels = c("0.80", "0.90", "0.95", "0.99"),
     trafo = function(x, param_set) {
-      switch(
-        x,
-        "0.80" = 0.80,
-        "0.90" = 0.90,
-        "0.95" = 0.95,
-        "0.99" = 0.99
-      )
+      switch(x,
+             "0.80" = 0.80,
+             "0.90" = 0.90,
+             "0.95" = 0.95,
+             "0.99" = 0.99)
     }
   ),
-  # dropcorr.cutoff = p_fct(levels = c(0.8, 0.9, 0.95, 0.99)),
-  # winsorizesimplegroup.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimplegroup.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
-  # winsorizesimple.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimple.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
   # scaling
   scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # filters
-  filter_branch.selection = p_fct(levels = c("jmi", "relief", "gausscovf3")),
   # interaction
   interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
 )
@@ -294,16 +249,12 @@ graph_rf = as_learner(graph_rf)
 as.data.table(graph_rf$param_set)[, .(id, class, lower, upper, levels)]
 search_space_rf = search_space_template$clone()
 search_space_rf$add(
-  ps(
-    regr.ranger.max.depth  = p_int(1, 15),
-    regr.ranger.replace    = p_lgl(),
-    regr.ranger.mtry.ratio = p_dbl(0.1, 1),
-    regr.ranger.num.trees  = p_int(10, 2000),
-    regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees"))
-  )
+  ps(regr.ranger.max.depth  = p_int(1, 15),
+     regr.ranger.replace    = p_lgl(),
+     regr.ranger.mtry.ratio = p_dbl(0.1, 1),
+     regr.ranger.num.trees  = p_int(10, 2000),
+     regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees")))
 )
-# regr.ranger.min.node.size   = p_int(1, 20), # Adjust the range as needed
-# regr.ranger.sample.fraction = p_dbl(0.1, 1),
 
 # xgboost graph
 graph_xgboost = graph_template %>>%
@@ -312,39 +263,18 @@ plot(graph_xgboost)
 graph_xgboost = as_learner(graph_xgboost)
 as.data.table(graph_xgboost$param_set)[grep("depth", id), .(id, class, lower, upper, levels)]
 search_space_xgboost = ps(
-  # subsample for hyperband
-  # subsample.frac = p_dbl(0.3, 1, tags = "budget"), # unccoment this if we want to use hyperband optimization
-  # preprocessing
-  # dropnacol.affect_columns = p_fct(
-  #   levels = c("0.01", "0.05", "0.10"),
-  #   trafo = function(x, param_set) {
-  #     switch(x,
-  #            "0.01" = 0.01,
-  #            "0.05" = 0.05,
-  #            "0.10" = 0.1)
-  #   }
-  # ),
   dropcorr.cutoff = p_fct(
     levels = c("0.80", "0.90", "0.95", "0.99"),
     trafo = function(x, param_set) {
-      switch(
-        x,
-        "0.80" = 0.80,
-        "0.90" = 0.90,
-        "0.95" = 0.95,
-        "0.99" = 0.99
-      )
+      switch(x,
+             "0.80" = 0.80,
+             "0.90" = 0.90,
+             "0.95" = 0.95,
+             "0.99" = 0.99)
     }
   ),
-  # dropcorr.cutoff = p_fct(levels = c(0.8, 0.9, 0.95, 0.99)),
-  # winsorizesimple.probs_high = p_fct(levels = c(0.999, 0.99, 0.98, 0.97, 0.90, 0.8)),
-  # winsorizesimple.probs_low = p_fct(levels = c(0.001, 0.01, 0.02, 0.03, 0.1, 0.2)),
   # scaling
   scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # filters
-  filter_branch.selection = p_fct(levels = c("jmi", "relief", "gausscovf3")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
   # learner
   regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
   regr.xgboost.max_depth = p_int(1, 20),
@@ -353,14 +283,57 @@ search_space_xgboost = ps(
   regr.xgboost.subsample = p_dbl(0.1, 1)
 )
 
+# glmnet graph
+graph_glmnet = graph_template %>>%
+  po("learner", learner = lrn("regr.glmnet"))
+graph_glmnet = as_learner(graph_glmnet)
+as.data.table(graph_glmnet$param_set)[, .(id, class, lower, upper, levels)]
+search_space_glmnet = ps(
+  dropcorr.cutoff = p_fct(
+    levels = c("0.80", "0.90", "0.95", "0.99"),
+    trafo = function(x, param_set) {
+      switch(x,
+             "0.80" = 0.80,
+             "0.90" = 0.90,
+             "0.95" = 0.95,
+             "0.99" = 0.99)
+    }
+  ),
+  # scaling
+  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
+  # interaction
+  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
+  # learner
+  regr.glmnet.s     = p_int(lower = 5, upper = 30),
+  regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
+)
 
-# BENCHMARK ---------------------------------------------------------------
-# benchamrk
-mlr3_save_path = "data"
-for (i in 177:180) {
-  # 1:length(cvs)
+# nnet graph
+graph_nnet = graph_template %>>%
+  po("learner", learner = lrn("regr.nnet", MaxNWts = 50000))
+graph_nnet = as_learner(graph_nnet)
+as.data.table(graph_nnet$param_set)[, .(id, class, lower, upper, levels)]
+search_space_nnet = search_space_template$clone()
+search_space_nnet$add(
+  ps(regr.nnet.size  = p_int(lower = 2, upper = 15),
+     regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
+     regr.nnet.maxit = p_int(lower = 50, upper = 500))
+)
+
+# Threads
+threads = 2
+set_threads(graph_rf, n = threads)
+set_threads(graph_xgboost, n = threads)
+set_threads(graph_nnet, n = threads)
+set_threads(graph_glmnet, n = threads)
+
+
+# BATCHMARK ---------------------------------------------------------------
+# batchmark
+designs_l = lapply(seq_along(cvs), function(i) {
+  # for (i in 1:length(cvs)) {
   # debug
-  # i = 177
+  # i = 1
   print(i)
 
   # get cv and task
@@ -372,7 +345,14 @@ for (i in 177:180) {
   cv_outer = cv_$custom_outer
   cat("Number of iterations fo cv inner is ", cv_inner$iters, "\n")
 
-  designs_cv_l = lapply(1:cv_inner$iters, function(j) {
+  # Only last for Live
+  if (LIVE) {
+    loop_ind = cv_inner$iters
+  } else {
+    loop_ind = 1:cv_inner$iters
+  }
+
+  designs_cv_l = lapply(loop_ind, function(j) {
     # debug
     # j = 1
     print(cv_inner$id)
@@ -393,7 +373,7 @@ for (i in 177:180) {
     tuner_ = tnr("random_search")
     # tuner_   = tnr("hyperband", eta = 5)
     # tuner_   = tnr("mbo")
-    term_evals = 10
+    term_evals = 50
 
     # auto tuner rf
     at_rf = auto_tuner(
@@ -417,31 +397,156 @@ for (i in 177:180) {
       term_evals = term_evals
     )
 
+    # auto tuner glmnet
+    at_glmnet = auto_tuner(
+      tuner = tuner_,
+      learner = graph_glmnet,
+      resampling = custom_,
+      measure = measure_,
+      search_space = search_space_glmnet,
+      # terminator = trm("none")
+      term_evals = term_evals
+    )
+
+    # auto tuner nnet
+    at_nnet = auto_tuner(
+      tuner = tuner_,
+      learner = graph_nnet,
+      resampling = custom_,
+      measure = measure_,
+      search_space = search_space_nnet,
+      # terminator = trm("none")
+      term_evals = term_evals
+    )
+
     # outer resampling
     customo_ = rsmp("custom")
     customo_$id = paste0("custom_", cv_inner$iters, "_", j)
-    customo_$instantiate(task_,
-                         list(cv_outer$train_set(j)),
-                         list(cv_outer$test_set(j)))
+    customo_$instantiate(task_, list(cv_outer$train_set(j)), list(cv_outer$test_set(j)))
 
     # nested CV for one round
     design = benchmark_grid(
       tasks = task_,
-      learners = list(at_rf, at_xgboost),
+      learners = list(at_rf, at_xgboost, at_glmnet, at_nnet),
       resamplings = customo_
     )
+    # populate registry with problems and algorithms to form the jobs
+    # print("Batchmark")
+    # batchmark(design, reg = reg)
   })
   designs_cv = do.call(rbind, designs_cv_l)
+})
+designs = do.call(rbind, designs_l)
 
-  # populate registry with problems and algorithms to form the jobs
-  print("Benchmark")
-  bmr = benchmark(designs_cv, store_models = FALSE)
+# exp dir
+if (LIVE) {
+  dirname_ = "experiments_live"
+  if (dir.exists(dirname_)) system(paste0("rm -r ", dirname_))
 
-  # save locally and to list
-  time_ = format.POSIXct(Sys.time(), format = "%Y%m%d%H%M%S")
-  file_name = paste0("commodities-", i, "-", time_, ".rds")
-  saveRDS(bmr, file.path(mlr3_save_path, file_name))
+} else {
+  dirname_ = "experiments"
 }
 
-# benchmark results
-bmr$score(msr("regr.mse"))
+# create registry
+print("Create registry")
+packages = c("data.table", "gausscov", "paradox", "mlr3", "mlr3pipelines",
+             "mlr3tuning", "mlr3misc", "future", "future.apply",
+             "mlr3extralearners", "stats")
+reg = makeExperimentRegistry(file.dir = dirname_, seed = 1, packages = packages)
+
+# populate registry with problems and algorithms to form the jobs
+print("Batchmark")
+batchmark(designs, reg = reg)
+
+# create sh file
+if (LIVE) {
+  # load registry
+  # reg = loadRegistry("experiments_live", writeable = TRUE)
+  # test 1 job
+  # result = testJob(1, external = TRUE, reg = reg)
+  # user  system elapsed
+  # 0.70    0.72  781.16
+
+  # get nondone jobs
+  ids = findNotDone(reg = reg)
+
+  # set up cluster (for local it is parallel)
+  cf = makeClusterFunctionsSocket(ncpus = 4L)
+  reg$cluster.functions = cf
+  saveRegistry(reg = reg)
+
+  # define resources and submit jobs
+  resources = list(ncpus = 2, memory = 8000)
+  submitJobs(ids = ids$job.id, resources = resources, reg = reg)
+} else {
+  # save registry
+  print("Save registry")
+  saveRegistry(reg = reg)
+
+  sh_file = sprintf(
+    "
+#!/bin/bash
+
+#PBS -N ZSEML
+#PBS -l ncpus=4
+#PBS -l mem=4GB
+#PBS -J 1-%d
+#PBS -o %s/logs
+#PBS -j oe
+
+cd ${PBS_O_WORKDIR}
+apptainer run image.sif run_job.R 0
+",
+    nrow(designs), dirname_
+  )
+  sh_file_name = "jobs.sh"
+  file.create(sh_file_name)
+  writeLines(sh_file, sh_file_name)
+}
+
+# Inspect individual result
+if (LIVE) {
+  # load registry
+  reg = loadRegistry("experiments_live", writeable = TRUE)
+
+  # import results
+  results_live = reduceResultsBatchmark(reg = reg)
+  results_live_dt = as.data.table(results_live)
+  head(results_live_dt)
+
+  # Get predictions
+  predictions = lapply(results_live_dt$prediction, as.data.table)
+  predictions = rbindlist(predictions)
+
+  # Merge tak id to get maturity
+  ids_ = vapply(results_live_dt$task,
+                function(tsk_) tsk_$id,
+                FUN.VALUE = character(1))
+  predictions = cbind(predictions, ids_)
+
+  # It is ok for 4 folds to have lower row_ids values.
+  # This is because one task in a list of tasks have lower number of observations
+  # (this is task with 120 maturity or 10 years maturity). It starts from 1971
+  # while other starts from 1961.
+
+  # The question is which model or combination of models to use for final prediction.
+  # From results in backtest it seems the two best options are:
+  # 1. mean acroos all predictions (all maturities and models)
+  # 2. mean of predictions for all models but only for maturity 60
+
+  # Get ansamble predictio (mean) that was best on backtest
+  predictions[, mean(response)] # 1)
+  predictions[ids_ == "m60_1"][, mean(response)] # 2)
+  best_prediction = predictions[, mean(response)]
+
+  # Save best prediction to Azure csv
+  cont = storage_container(BLOBENDPOINT, "qc-live")
+  time_ = strftime(Sys.time(), format = "%Y%m%d%H%M%S")
+  file_name = glue("tlt_macro_prediction_{time_}.csv")
+  storage_write_csv(
+    object = data.frame(prediction_tlt = best_prediction),
+    container = cont,
+    file = file_name
+  )
+}
+
