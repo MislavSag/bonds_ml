@@ -22,6 +22,7 @@ if (interactive()) {
   BLOBENDPOINT = storage_endpoint(endpoint, key=key)
   cont = storage_container(BLOBENDPOINT, "qc-backtest")
   dt = storage_read_csv(cont, "commodities_dt.csv")
+  setDT(dt)
 }
 
 
