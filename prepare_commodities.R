@@ -12,6 +12,7 @@ library(readxl)
 library(rvest)
 library(httr)
 library(ggplot2)
+library(AzureStor)
 
 
 # PARAMETERS --------------------------------------------------------------
@@ -140,5 +141,12 @@ ggplot(dt[var %in% c("silver", "crude_oil_average"), .(month, value, var)][200:1
   geom_line() +
   theme_minimal()
 
-# save
+# Save
 fwrite(dt, "data/commodities_dt.csv")
+
+# Save to Azure
+endpoint = "https://snpmarketdata.blob.core.windows.net/"
+key = readLines('./blob_key.txt')
+BLOBENDPOINT = storage_endpoint(endpoint, key=key)
+cont = storage_container(BLOBENDPOINT, "qc-backtest")
+storage_write_csv(dt, cont, "commodities_dt.csv")

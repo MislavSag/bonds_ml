@@ -14,7 +14,15 @@ LIVE        = FALSE
 
 # IMPORT DATA -------------------------------------------------------------
 # get data generated in prepare_commodities
-dt = fread("data/commodities_dt.csv")
+if (interactive()) {
+  dt = fread("data/commodities_dt.csv")
+} else {
+  endpoint = "https://snpmarketdata.blob.core.windows.net/"
+  key = readLines('./blob_key.txt')
+  BLOBENDPOINT = storage_endpoint(endpoint, key=key)
+  cont = storage_container(BLOBENDPOINT, "qc-backtest")
+  storage_read_csv(dt, cont, "commodities_dt.csv")
+}
 
 
 # TASKS --------------------------------------------------------
