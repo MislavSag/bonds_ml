@@ -3,7 +3,7 @@ library(gausscov)
 library(httr)
 library(mlr3verse)
 library(paradox)
-
+library(AzureStor)
 
 
 # PARAMETERS --------------------------------------------------------------
