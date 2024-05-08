@@ -131,9 +131,9 @@ dt = merge(dt, fred_dt, by.x = "month", by.y = "date", all.x = TRUE, all.y = FAL
 
 # Momentum predictors
 setorder(dt, var, month)
-mom_width = 1:12
+mom_width = 2:12
 mom_cols = paste0("m_", mom_width)
-dt[, (mom_cols) := lapply(mom_width, function(x) value / shift(value, x) - 1), by = var]
+dt[, (mom_cols) := lapply(mom_width, function(x) shift(value) / shift(value, x) - 1), by = var]
 
 # Plot few commodity series
 ggplot(dt[var %in% c("silver", "crude_oil_average"), .(month, value, var)][200:150],
