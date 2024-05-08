@@ -224,7 +224,7 @@ charts.PerformanceSummary(as.xts.data.table(dt_back_ansambl))
 
 # QC PREPARE --------------------------------------------------------------
 # preapre data or QC and save
-qc_data = predictions_wide[, .(month, strategy = signal_ranger)]
+qc_data = predictions_wide[, .(month, strategy = signal_nnet)]
 qc_data = na.omit(qc_data)
 qc_data[, sum(abs(diff(strategy)))] # number of trades
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
