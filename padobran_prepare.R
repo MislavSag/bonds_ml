@@ -36,7 +36,7 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
 AzureStor::list_blobs(cont)
-dt = storage_read_csv(cont, "bonds-predictors-month-20240505.csv")
+dt = storage_read_csv(cont, "bonds-predictors-month-20240518.csv")
 setDT(dt)
 
 # If LIVE change and keep last date

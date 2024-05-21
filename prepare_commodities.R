@@ -43,6 +43,24 @@ commodity_prices[, (cols_char) := lapply(.SD, as.numeric), .SDcols = cols_char]
 # wide to long
 dt = melt(commodity_prices, id.vars = "month", variable.name = "var")
 
+# Choose variables
+commodities = c(
+  "gold",
+  # "silver",
+  # "platinum",
+  "crude_oil_average",
+  # "copper",
+  # "aluminum",
+  # "lead",
+  # "nickel",
+  # "tin",
+  # "zinc",
+  # "cocoa",
+  # "natural_gas_index",
+  # "sugar_world",
+  "soybeans"
+)
+
 
 # TARGETS -----------------------------------------------------------------
 # calculate future returns
