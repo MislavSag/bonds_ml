@@ -6,6 +6,9 @@ library(AzureStor)
 library(findata)
 library(fs)
 library(glue)
+library(stringr)
+library(janitor)
+library(MultiATSM)
 
 
 # PARAMETERS --------------------------------------------------------------
@@ -52,13 +55,20 @@ modify_google_drive_url <- function(url) {
 }
 
 # Import Lui and Wu data
-lw = fread("data/lw_monthly.csv")
-lw = melt(lw, id.vars = "date",
+# source: https://sites.google.com/view/jingcynthiawu/yield-data
+lw = fread("data/lw_monthly.csv", skip = 8)
+names_ = str_extract(colnames(lw), "\\d+")[-1]
+names_ = paste0("m", names_)
+setnames(lw, c("date", names_))
+lw[, date := as.Date(paste0(as.character(date), "01"), format = "%Y%m%d")]
+lw[, date := as.IDate(ceiling_date(date, "month"))]
+lw = melt(lw,
+          id.vars = "date",
           variable.name = "maturity",
           value.name = "yield",
           variable.factor = FALSE)
 
-# merge old and new data
+# Merge old and new data
 maturities_keep = yields[, unique(maturity)]
 yieldsadj = lw[maturity %in% maturities_keep]
 yieldsadj = merge(yieldsadj, yields, by = c("maturity", "date"), all = TRUE)
@@ -189,11 +199,12 @@ dt[, (mom_cols) := lapply(mom_width, function(x) price / shift(price, x) - 1),
 
 # yield curve factors
 yields_multiatsm = dt[, .(date, maturity, yield)]
-yields_multiatsm = dcast(yields_multiatsm, maturity ~ date)
+yields_multiatsm = dcast(yields_multiatsm, maturity ~ date, value.var = "yield")
 yields_multiatsm[, month_ := as.integer(gsub("m", "", maturity))]
 yields_multiatsm[, maturity := paste0("Y", month_, "M_US")]
 setorder(yields_multiatsm, month_)
 yields_multiatsm = as.data.frame(yields_multiatsm)
+yields_multiatsm = remove_empty(yields_multiatsm, which = "cols")
 rownames(yields_multiatsm) = yields_multiatsm[, 1]
 yields_multiatsm = yields_multiatsm[, -1]
 yields_multiatsm = na.omit(yields_multiatsm)
@@ -211,6 +222,7 @@ dt = merge(dt, spa_fact, by = "date", all.x = TRUE)
 # Checks
 dt[, min(date)]
 dt[, max(date)]
+dt[1:10]
 dt[is.na(excess_return_1) & maturity_months < 120]
 
 # save to Azure
