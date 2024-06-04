@@ -9,7 +9,7 @@ library(glue)
 FREQ = "month" # Can be week or month
 
 # Import fred series
-fred_dt = fread("F:/data/macro/fred.csv")
+fred_dt = fread("/home/sn/data/macro/fred.csv")
 
 # Check dupplicates. I just want to check how many duplicates area there
 # Otherwise, this is not necessary step. Later when I will move function to
@@ -90,6 +90,11 @@ columns_save = rbindlist(columns_save)
 
 # Final dt object with sampled data
 fred_sample = fred_dt[series_id %chin% columns_save[, unique(cols)]]
+
+# Create directory if it does not exist
+if (!dir_exists("data")) {
+  dir_create("data")
+}
 
 # Save final objects
 fwrite(columns_save, glue("data/fred_col_{FREQ}.csv"))

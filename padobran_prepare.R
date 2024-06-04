@@ -36,11 +36,14 @@ endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
 AzureStor::list_blobs(cont)
-dt = storage_read_csv(cont, "bonds-predictors-month-20240505.csv")
+dt = storage_read_csv(cont, "bonds-predictors-month-20240604.csv")
 setDT(dt)
 
 # If LIVE change and keep last date
 dt[date == max(date), excess_return_1 := 0]
+
+# Remove missing values
+dt = na.omit(dt, cols = "maturity_years")
 
 # Checks
 dt[, min(date)]
@@ -204,9 +207,8 @@ cvs = lapply(tasks, function(tsk_) {
   )
 })
 
+# Checks
 lapply(1:11, function(i) cvs[[i]]$custom_outer$test_set(cvs[[i]]$custom_outer$iters))
-
-
 
 # visualize CV's
 if (interactive()) {
