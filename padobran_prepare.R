@@ -35,8 +35,10 @@ blob_key = readLines('./blob_key.txt')
 endpoint = "https://snpmarketdata.blob.core.windows.net/"
 BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
 cont = storage_container(BLOBENDPOINT, "padobran")
-AzureStor::list_blobs(cont)
-dt = storage_read_csv(cont, "bonds-predictors-month-20240604.csv")
+blob_files = AzureStor::list_blobs(cont)
+dates = as.Date(gsub(".*-|\\.csv", "", blob_files$name), format = "%Y%m%d")
+last_file = blob_files$name[which.max(dates)]
+dt = storage_read_csv(cont, last_file)
 setDT(dt)
 
 # If LIVE change and keep last date
@@ -78,7 +80,7 @@ predictors = setdiff(cols, non_predictors)
 # help function to prepare data for specific maturity and horizont
 id_cols = c("date", "maturity")
 tasks = lapply(1:nrow(task_params), function(i) {
-  # i = 1
+  # i = 11
   horizont_ = task_params[i, "horizont"]
   mat_ = task_params[i, "maturity"]
   target_ = paste0("excess_return_", horizont_)
@@ -187,12 +189,12 @@ nested_cv_expanding = function(task,
 
 # create list of cvs
 cvs = lapply(tasks, function(tsk_) {
-  # tsk_ = tasks[[3]]
+  # tsk_ = tasks[[11]]
   print(tsk_$id)
   horizont_ = as.integer(gsub("excess_return_", "", tsk_$target_names))
   maturity_ = as.integer(gsub("m|_.*", "", tsk_$id))
   dates_ = tsk_$backend$data(rows = tsk_$row_ids, cols = "date")
-  min_date = dates_[, min(as.Date(date), na.rm = TRUE)]
+  min_date = dates_[, min(as.Date(date), na.rm = TRUE) %m-% months(1)]
   print(min_date)
   print(dates_[, max(as.Date(date), na.rm = TRUE)])
   train_length = mondf(min_date, as.Date("2001-01-01")) - maturity_

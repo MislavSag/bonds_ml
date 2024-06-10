@@ -48,20 +48,21 @@ setorder(yields, maturity, date)
 # Check last date
 yields[date == max(date)]
 
-# Function to modify the Google Drive URL for direct download
-modify_google_drive_url <- function(url) {
-  id <- sub(".*id=([^&]*).*", "\\1", url)
-  return(paste0("https://drive.google.com/uc?export=download&id=", id))
-}
+# # Function to modify the Google Drive URL for direct download
+# modify_google_drive_url <- function(url) {
+#   id <- sub(".*id=([^&]*).*", "\\1", url)
+#   return(paste0("https://drive.google.com/uc?export=download&id=", id))
+# }
 
 # Import Lui and Wu data
 # source: https://sites.google.com/view/jingcynthiawu/yield-data
-lw = fread("data/lw_monthly.csv", skip = 8)
+lw = fread("data/lw_monthly.csv")
 names_ = str_extract(colnames(lw), "\\d+")[-1]
 names_ = paste0("m", names_)
 setnames(lw, c("date", names_))
 lw[, date := as.Date(paste0(as.character(date), "01"), format = "%Y%m%d")]
-lw[, date := as.IDate(ceiling_date(date, "month"))]
+lw[, date]
+lw[, date := as.IDate(ceiling_date(date, "month"))] # IMPORTANT
 lw = melt(lw,
           id.vars = "date",
           variable.name = "maturity",
@@ -79,6 +80,11 @@ yieldsadj[, ratio := .SD[date == next_date, yield_treasury] / .SD[date == lw_max
 yieldsadj[, yield := yield * ratio]
 yieldsadj[, yield := ifelse(is.na(yield), yield_treasury, yield)]
 yieldsadj[, `:=`(yield_treasury = NULL, ratio = NULL)]
+
+# Checks
+# yieldsadj[, unique(maturity)]
+# yieldsadj[m == "m1"]
+# lw[maturity == "m1"]
 
 
 # PRICES, ECESS RETURNS AND FORWARDS --------------------------------------
@@ -194,6 +200,7 @@ if (FREQ == "biweek") {
   mom_width = c(1:12)
 }
 mom_cols = paste0("m_", mom_width)
+head(dt[, .(date, price)], 50)
 dt[, (mom_cols) := lapply(mom_width, function(x) price / shift(price, x) - 1),
    by = maturity]
 
