@@ -240,4 +240,9 @@ cont = storage_container(BLOBENDPOINT, "padobran")
 time_ = strftime(Sys.time(), format = "%Y%m%d")
 file_name = glue("bonds-predictors-{FREQ}-{time_}.csv")
 print(file_name)
+fwrite(dt, path("data", file_name))
 storage_write_csv(dt, cont, file_name)
+
+# Move to padobran if necessary (if want to backtest on all data)
+paste0("scp ", getwd(), path("/data", file_name), " padobran:/home/jmaric/bonds_ml/", file_name)
+# "scp /home/sn/data/strategies/pread/dataset_pread.csv padobran:/home/jmaric/pread/dataset_pread.csv"

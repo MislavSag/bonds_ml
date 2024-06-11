@@ -3,7 +3,7 @@ library(gausscov)
 library(httr)
 library(mlr3verse)
 library(paradox)
-library(AzureStor)
+# library(AzureStor)
 library(mlr3batchmark)
 library(batchtools)
 library(finautoml)
@@ -29,17 +29,26 @@ if (interactive()) {
 }
 
 
+# PARAMETERS --------------------------------------------------------------
+# set global vars
+LIVE = FALSE
+
+
 # DATA --------------------------------------------------------------------
 # Downlaod data from Azure blob
-blob_key = readLines('./blob_key.txt')
-endpoint = "https://snpmarketdata.blob.core.windows.net/"
-BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
-cont = storage_container(BLOBENDPOINT, "padobran")
-blob_files = AzureStor::list_blobs(cont)
-dates = as.Date(gsub(".*-|\\.csv", "", blob_files$name), format = "%Y%m%d")
-last_file = blob_files$name[which.max(dates)]
-dt = storage_read_csv(cont, last_file)
-setDT(dt)
+if (LIVE) {
+  blob_key = readLines('./blob_key.txt')
+  endpoint = "https://snpmarketdata.blob.core.windows.net/"
+  BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
+  cont = storage_container(BLOBENDPOINT, "padobran")
+  blob_files = AzureStor::list_blobs(cont)
+  dates = as.Date(gsub(".*-|\\.csv", "", blob_files$name), format = "%Y%m%d")
+  last_file = blob_files$name[which.max(dates)]
+  dt = storage_read_csv(cont, last_file)
+  setDT(dt)
+} else {
+  dt = fread("bonds-predictors-month-20240611.csv")
+}
 
 # If LIVE change and keep last date
 dt[date == max(date), excess_return_1 := 0]
