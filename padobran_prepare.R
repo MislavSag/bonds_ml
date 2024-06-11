@@ -8,6 +8,7 @@ library(mlr3batchmark)
 library(batchtools)
 library(finautoml)
 library(glue)
+library(lubridate)
 
 
 # COMMAND LINE ARGUMENTS --------------------------------------------------
