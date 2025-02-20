@@ -38,6 +38,9 @@ yields = yields_raw[, tail(.SD, 1), by = .(label, month)]
 yields[, date := NULL]
 
 # Change label to be the same as in lw data
+yields[, .(label = paste0("m", gsub("Y|M_US", "", label)))][, unique(label)]
+tail(yields[, paste0("m", gsub("Y|M_US", "", label))], 500)
+yields = na.omit(yields)
 yields[, label := paste0("m", gsub("Y|M_US", "", label))]
 
 # Sort
@@ -61,7 +64,6 @@ names_ = str_extract(colnames(lw), "\\d+")[-1]
 names_ = paste0("m", names_)
 setnames(lw, c("date", names_))
 lw[, date := as.Date(paste0(as.character(date), "01"), format = "%Y%m%d")]
-lw[, date]
 lw[, date := as.IDate(ceiling_date(date, "month"))] # IMPORTANT
 lw = melt(lw,
           id.vars = "date",
@@ -130,18 +132,38 @@ files_ = dir_ls(path(temp_dir, "fred"))
 fred_dt = lapply(files_, fread)
 fred_dt = lapply(fred_dt, function(dt_) dt_[, value := as.numeric(value)])
 fred_dt = rbindlist(fred_dt)
+
+# Check dates
+fred_dt[, unique(series_id)]
+unique(fred_dt, by = c("series_id", "vintage"))
+fred_dt[series_id == "UNRATE"]
+plot(as.xts.data.table(fred_dt[series_id == "UNRATE"][, .(date, value)]))
+plot(as.xts.data.table(fred_dt[series_id == "UNRATE"][, .(realtime_start, value)]))
+plot(as.xts.data.table(fred_dt[series_id == "UNRATE"][, .(realtime_start, value)])["2022/2023"])
+anyDuplicated(fred_dt[series_id == "UNRATE"][, .(realtime_start)])
+fred_dt[series_id == "UNRATE"][duplicated(realtime_start) | duplicated(realtime_start, fromLast = TRUE)][order(date)]
+fred_dt[series_id == "UNRATE"][date == as.Date("2023-12-01")]
+
+# Fix dates
 fred_dt[, date_real := date]
 fred_dt[vintage == 1, date_real := realtime_start]
 fred_dt[, realtime_start := NULL]
 fred_dt[, max(date_real)]
-fred_dt = unique(fred_dt, by = c("series_id", "date_real"))
+fred_dt = unique(fred_dt, by = c("series_id", "date")) # IMPORTANT: I have changed this from date_real to date
 
+# Check
+if (interactive()) {
+  fred_dt[series_id == "UNRATE"][date == as.Date("2023-12-01")]
+  plot(as.xts.data.table(fred_dt[series_id == "UNRATE", .(date, value)]))
+  plot(as.xts.data.table(fred_dt[series_id == "UNRATE", .(date_real, value)]))
+}
+
+# Choose month or beweek
 ceiling_biweek <- function(date) {
   weeks_since_epoch <- floor(as.numeric(difftime(date, as.Date('1970-01-05'), units = "weeks")) / 2)
   next_biweek_start <- as.Date('1970-01-05') + weeks(weeks_since_epoch * 2 + 2)
   return(next_biweek_start)
 }
-
 if (FREQ == "biweek") {
   fred_dt[, biweek := ceiling_biweek(date_real)]
 } else if (FREQ == "month") {
@@ -154,16 +176,24 @@ fred_dt = fred_dt[, ..cols_keep]
 fred_dt = fred_dt[x > as.Date("1961-05-01"), env = list(x = FREQ)]
 setorderv(fred_dt, c("series_id", FREQ))
 
-# Diff if necessary
+# Add diff columns but keep original
 fred_dt = fred_dt[, ndif := ndiffs(value), by = series_id]
 fred_dt[, unique(ndif), by = series_id][, .N, by = V1]
 fred_dt[ndif > 0, value_diff := c(rep(NA, unique(ndif)), diff(value, unique(ndif))), by = series_id]
+fred_dt = na.omit(fred_dt)
 
 # Reshape
 if (FREQ == "month") {
-  fred_dt = dcast(fred_dt[, .(month, series_id, value)],
-                  month ~ series_id,
-                  value.var = "value")
+  fred_dt_value = dcast(fred_dt[, .(month, series_id, value)],
+                        month ~ series_id,
+                        value.var = "value")
+  fred_dt_diff = dcast(fred_dt[, .(month, series_id, value_diff)],
+                       month ~ series_id,
+                       value.var = "value_diff")
+  setnames(fred_dt_diff,
+           colnames(fred_dt_diff)[2:ncol(fred_dt_diff)],
+           paste0(colnames(fred_dt_diff)[2:ncol(fred_dt_diff)], "_diff"))
+  fred_dt = merge(fred_dt_value, fred_dt_diff, by = "month")
 } else if (FREQ == "biweek") {
   fred_dt = dcast(fred_dt[, .(biweek, series_id, value)],
                   biweek ~ series_id,
@@ -197,7 +227,7 @@ setorder(dt, maturity, date)
 if (FREQ == "biweek") {
   mom_width = 1:26
 } else if (FREQ == "month") {
-  mom_width = c(1:12)
+  mom_width = c(1:24)
 }
 mom_cols = paste0("m_", mom_width)
 head(dt[, .(date, price)], 50)
@@ -225,6 +255,10 @@ spa_fact = dcast(spa_fact, date ~ var)
 setnames(spa_fact, colnames(spa_fact), gsub(" ", "_", colnames(spa_fact)))
 spa_fact[, date := as.IDate(date)]
 dt = merge(dt, spa_fact, by = "date", all.x = TRUE)
+
+# Add ratios of 10y / 1y and 1y / 3m
+dt[, m12_m3 := .SD[maturity == "m12", yield] / .SD[maturity == "m3", yield] - 1, by = date]
+dt[, m120_m12 := .SD[maturity == "m120", yield] / .SD[maturity == "m12", yield] - 1, by = date]
 
 # Checks
 dt[, min(date)]

@@ -3,7 +3,7 @@ library(gausscov)
 library(httr)
 library(mlr3verse)
 library(paradox)
-# library(AzureStor)
+library(AzureStor)
 library(mlr3batchmark)
 library(batchtools)
 library(finautoml)
@@ -32,7 +32,7 @@ if (interactive()) {
 
 # PARAMETERS --------------------------------------------------------------
 # set global vars
-LIVE = FALSE
+# LIVE = FALSE
 
 
 # DATA --------------------------------------------------------------------
@@ -48,11 +48,13 @@ if (LIVE) {
   dt = storage_read_csv(cont, last_file)
   setDT(dt)
 } else {
-  dt = fread("bonds-predictors-month-20240611.csv")
+  dt = fread("bonds-predictors-month-20250220.csv")
 }
 
 # If LIVE change and keep last date
-dt[date == max(date), excess_return_1 := 0]
+if (LIVE == TRUE) {
+  dt[date == max(date), excess_return_1 := 0]
+}
 
 # Remove missing values
 dt = na.omit(dt, cols = "maturity_years")
@@ -264,21 +266,16 @@ if (interactive()) {
 
 
 # ADD PIPELINES -----------------------------------------------------------
-# source pipes, filters and other
-source("mlr3_gausscov_f1st.R")
-source("mlr3_gausscov_f3st.R")
 # measures
 source("AdjLoss2.R")
-source("PortfolioRet.R")
 
 # add my pipes to mlr dictionary
 mlr_pipeops$add("uniformization", finautoml::PipeOpUniform)
 mlr_pipeops$add("dropcorr", finautoml::PipeOpDropCorr)
-mlr_filters$add("gausscov_f1st", FilterGausscovF1st)
-mlr_filters$add("gausscov_f3st", FilterGausscovF3st)
+mlr_filters$add("gausscov_f1st", finautoml::FilterGausscovF1st)
+mlr_filters$add("gausscov_f3st", finautoml::FilterGausscovF3st)
 mlr_measures$add("linex", Linex)
 mlr_measures$add("adjloss2", AdjLoss2)
-mlr_measures$add("portfolio_ret", PortfolioRet)
 
 
 # LEARNERS ----------------------------------------------------------------
@@ -298,8 +295,8 @@ filters_ = list(
   po("filter", flt("cmim"), filter.nfeat = 3),
   po("filter", flt("carscore"), filter.nfeat = 3),
   po("filter", flt("information_gain"), filter.nfeat = 3),
-  po("filter", filter = flt("relief"), filter.nfeat = 3),
-  po("filter", filter = flt("gausscov_f1st"), p0 = 0.1, filter.cutoff = 0)
+  # po("filter", filter = flt("relief"), filter.nfeat = 3),
+  po("filter", filter = flt("gausscov_f1st"), p0 = 0.01, step = 0.01, save = TRUE, filter.nfeat = 5)
 )
 graph_filters = gunion(filters_) %>>%
   po("featureunion", length(filters_), id = "feature_union_filters")
@@ -342,19 +339,41 @@ search_space_template = ps(
   interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix"))
 )
 
+# Test
+if (interactive()) {
+  # show all combinations from search space, like in grid
+  sp_grid = generate_design_grid(search_space_template, 1)
+  sp_grid = sp_grid$data
+  sp_grid
+
+  # check ids of nth cv sets
+  train_ids = cvs[[1]]$custom_inner$instance$train[[284]]
+
+  # help graph for testing preprocessing
+  task_ = tasks[[1]]$clone()
+  task_$filter(train_ids)
+  gr_test = graph_template$clone()
+  gr_res = gr_test$train(task_)
+  gr_res$removeconstants_3.output$n_features
+  gr_res$removeconstants_3.output$feature_names
+  # gr_res$removeconstants_3.output$data()
+}
+
 # random forest graph
 graph_rf = graph_template %>>%
   po("learner", learner = lrn("regr.ranger"))
 plot(graph_rf)
 graph_rf = as_learner(graph_rf)
 as.data.table(graph_rf$param_set)[, .(id, class, lower, upper, levels)]
-search_space_rf = search_space_template$clone()
-search_space_rf$add(
-  ps(regr.ranger.max.depth  = p_int(1, 15),
-     regr.ranger.replace    = p_lgl(),
-     regr.ranger.mtry.ratio = p_dbl(0.1, 1),
-     regr.ranger.num.trees  = p_int(10, 2000),
-     regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees")))
+search_space_rf = c(
+  search_space_template,
+  ps(
+    regr.ranger.max.depth  = p_int(1, 15),
+    regr.ranger.replace    = p_lgl(),
+    regr.ranger.mtry.ratio = p_dbl(0.3, 1),
+    regr.ranger.num.trees  = p_int(10, 2000),
+    regr.ranger.splitrule  = p_fct(levels = c("variance", "extratrees"))
+  )
 )
 
 # xgboost graph
@@ -363,25 +382,15 @@ graph_xgboost = graph_template %>>%
 plot(graph_xgboost)
 graph_xgboost = as_learner(graph_xgboost)
 as.data.table(graph_xgboost$param_set)[grep("depth", id), .(id, class, lower, upper, levels)]
-search_space_xgboost = ps(
-  dropcorr.cutoff = p_fct(
-    levels = c("0.80", "0.90", "0.95", "0.99"),
-    trafo = function(x, param_set) {
-      switch(x,
-             "0.80" = 0.80,
-             "0.90" = 0.90,
-             "0.95" = 0.95,
-             "0.99" = 0.99)
-    }
-  ),
-  # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # learner
-  regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
-  regr.xgboost.max_depth = p_int(1, 20),
-  regr.xgboost.eta       = p_dbl(0.0001, 1, logscale = TRUE),
-  regr.xgboost.nrounds   = p_int(1, 5000),
-  regr.xgboost.subsample = p_dbl(0.1, 1)
+search_space_xgboost = c(
+  search_space_template,
+  ps(
+    regr.xgboost.alpha     = p_dbl(0.001, 100, logscale = TRUE),
+    regr.xgboost.max_depth = p_int(1, 20),
+    regr.xgboost.eta       = p_dbl(0.0001, 1, logscale = TRUE),
+    regr.xgboost.nrounds   = p_int(1, 5000),
+    regr.xgboost.subsample = p_dbl(0.1, 1)
+  )
 )
 
 # glmnet graph
@@ -389,24 +398,12 @@ graph_glmnet = graph_template %>>%
   po("learner", learner = lrn("regr.glmnet"))
 graph_glmnet = as_learner(graph_glmnet)
 as.data.table(graph_glmnet$param_set)[, .(id, class, lower, upper, levels)]
-search_space_glmnet = ps(
-  dropcorr.cutoff = p_fct(
-    levels = c("0.80", "0.90", "0.95", "0.99"),
-    trafo = function(x, param_set) {
-      switch(x,
-             "0.80" = 0.80,
-             "0.90" = 0.90,
-             "0.95" = 0.95,
-             "0.99" = 0.99)
-    }
-  ),
-  # scaling
-  scale_branch.selection = p_fct(levels = c("uniformization", "scale")),
-  # interaction
-  interaction_branch.selection = p_fct(levels = c("nop_interaction", "modelmatrix")),
-  # learner
-  regr.glmnet.s     = p_int(lower = 5, upper = 30),
-  regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
+search_space_glmnet = c(
+  search_space_template,
+  ps(
+    regr.glmnet.s     = p_int(lower = 5, upper = 30),
+    regr.glmnet.alpha = p_dbl(lower = 1e-4, upper = 1, logscale = TRUE)
+  )
 )
 
 # nnet graph
@@ -414,11 +411,13 @@ graph_nnet = graph_template %>>%
   po("learner", learner = lrn("regr.nnet", MaxNWts = 50000))
 graph_nnet = as_learner(graph_nnet)
 as.data.table(graph_nnet$param_set)[, .(id, class, lower, upper, levels)]
-search_space_nnet = search_space_template$clone()
-search_space_nnet$add(
-  ps(regr.nnet.size  = p_int(lower = 2, upper = 15),
-     regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
-     regr.nnet.maxit = p_int(lower = 50, upper = 500))
+search_space_nnet = c(
+  search_space_template,
+  ps(
+    regr.nnet.size  = p_int(lower = 2, upper = 15),
+    regr.nnet.decay = p_dbl(lower = 0.0001, upper = 0.1),
+    regr.nnet.maxit = p_int(lower = 50, upper = 500)
+    )
 )
 
 # Threads
