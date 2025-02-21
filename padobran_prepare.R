@@ -48,7 +48,7 @@ if (LIVE) {
   dt = storage_read_csv(cont, last_file)
   setDT(dt)
 } else {
-  dt = fread("bonds-predictors-month-20250220.csv")
+  dt = fread("bonds-predictors-month-20250221.csv")
 }
 
 # If LIVE change and keep last date
@@ -282,8 +282,8 @@ mlr_measures$add("adjloss2", AdjLoss2)
 # graph template
 gr = gunion(list(
   po("nop", id = "nop_union_pca"),
-  po("pca", center = FALSE, rank. = 10),
-  po("ica", n.comp = 10)
+  po("pca", center = FALSE, rank. = 5),
+  po("ica", n.comp = 5)
 )) %>>% po("featureunion")
 filters_ = list(
   po("filter", flt("disr"), filter.nfeat = 3),
