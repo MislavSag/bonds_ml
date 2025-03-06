@@ -3,7 +3,6 @@ library(gausscov)
 library(httr)
 library(mlr3verse)
 library(paradox)
-library(AzureStor)
 library(mlr3batchmark)
 library(batchtools)
 library(finautoml)
@@ -38,6 +37,7 @@ if (interactive()) {
 # DATA --------------------------------------------------------------------
 # Downlaod data from Azure blob
 if (LIVE) {
+  library(AzureStor)
   blob_key = readLines('./blob_key.txt')
   endpoint = "https://snpmarketdata.blob.core.windows.net/"
   BLOBENDPOINT = storage_endpoint(endpoint, key=blob_key)
