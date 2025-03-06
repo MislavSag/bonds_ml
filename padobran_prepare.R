@@ -273,7 +273,7 @@ source("AdjLoss2.R")
 mlr_pipeops$add("uniformization", finautoml::PipeOpUniform)
 mlr_pipeops$add("dropcorr", finautoml::PipeOpDropCorr)
 mlr_filters$add("gausscov_f1st", finautoml::FilterGausscovF1st)
-mlr_filters$add("gausscov_f3st", finautoml::FilterGausscovF3st)
+# mlr_filters$add("gausscov_f3st", finautoml::FilterGausscovF3st)
 mlr_measures$add("linex", Linex)
 mlr_measures$add("adjloss2", AdjLoss2)
 
