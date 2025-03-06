@@ -4,6 +4,7 @@ library(httr)
 library(mlr3verse)
 library(paradox)
 library(mlr3batchmark)
+library(mlr3filters)
 library(batchtools)
 library(finautoml)
 library(glue)
@@ -222,7 +223,9 @@ cvs = lapply(tasks, function(tsk_) {
 })
 
 # Checks
-lapply(1:11, function(i) cvs[[i]]$custom_outer$test_set(cvs[[i]]$custom_outer$iters))
+if (interactive()) {
+  lapply(1:11, function(i) cvs[[i]]$custom_outer$test_set(cvs[[i]]$custom_outer$iters))
+}
 
 # visualize CV's
 if (interactive()) {
