@@ -48,7 +48,7 @@ if (LIVE) {
   dt = storage_read_csv(cont, last_file)
   setDT(dt)
 } else {
-  dt = fread("bonds-predictors-month-20250221.csv")
+  dt = fread("bonds-predictors-month-20250306.csv")
 }
 
 # If LIVE change and keep last date
