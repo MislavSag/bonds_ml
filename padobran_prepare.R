@@ -1,6 +1,5 @@
 library(data.table)
 library(gausscov)
-library(httr)
 library(mlr3verse)
 library(paradox)
 library(mlr3batchmark)
